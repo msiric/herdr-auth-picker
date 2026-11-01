@@ -63,8 +63,18 @@ Then save the logins you have:
 herdr plugin action invoke msiric.auth-picker.save
 ```
 
-Log into your other account the normal way (`/login` in Claude Code, or
-`codex login`), and save again. To bring over the old plugin's profiles, see
+Then add your other accounts:
+
+- **Claude Code:** `/login` with the other account, then `save` again.
+- **Codex: never `codex login` in your normal Codex home to add an account.**
+  It revokes the login that home holds, even another account's, which would
+  kill the saved one. Log in under a throwaway home and import from there:
+
+  ```sh
+  CODEX_HOME=/tmp/codex-second codex login     # sign in as the other account
+  python3 -I main.py save codex --from /tmp/codex-second
+  rm -rf /tmp/codex-second                      # it holds that login in plaintext
+  ``` To bring over the old plugin's profiles, see
 [Moving from herdr-account-switch](#moving-from-herdr-account-switch).
 
 ## Use
@@ -144,7 +154,7 @@ bad values are errors that `status` reports, never silently ignored.
 | Claude login | Keychain `Claude Code-credentials` (macOS) or `~/.claude/.credentials.json`; identity in `~/.claude.json` (`oauthAccount` only). `CLAUDE_CONFIG_DIR` is honoured as Claude honours it. |
 | Claude's locks | `~/.claude/.oauth_refresh.lock`, `~/.claude.lock`, `~/.claude/.storage-write.lock`, `~/.claude.json.lock`, held only during a switch |
 | Codex login | `$CODEX_HOME/auth.json` (default `~/.codex`), with `auth.json.lock` held while writing |
-| saved logins | Keychain service `msiric.auth-picker` (macOS); `<state dir>/secrets/` (Linux) |
+| saved logins | Keychain service `msiric.auth-picker.<install id>`, one per state directory (macOS); `<state dir>/secrets/` (Linux) |
 | state, no secrets | `~/.local/state/herdr/plugins/msiric.auth-picker/`: profile index, switch journal, rescues, usage cache |
 | switch lock | `~/.local/state/msiric.auth-picker/locks/` |
 
@@ -162,7 +172,14 @@ bad values are errors that `status` reports, never silently ignored.
   is set in that session's environment, it outranks any login on disk; unset it
   and restart the session.
 - **"logged in outside auth-picker".** You used `/login` since the last switch.
-  The live login is kept for undo; run `sync` to update its saved copy.
+  That newer login is saved to its profile when you switch away, and the copy
+  before it is kept: `revert <kind> <name> --yes` swaps them back.
+- **Codex still uses the old account after a switch.** Codex sessions talk to
+  a background server that keeps its login in memory. Run
+  `codex app-server daemon restart` (it interrupts running Codex work); a
+  switch says when this applies.
+- **A rescue holds the login you want.** `rescue --adopt ID --item N` saves it
+  as a profile; then clear the rescue.
 
 ## Moving from herdr-account-switch
 
@@ -179,9 +196,8 @@ directories, which the import lists: they hold logins in plaintext.
 
 ## Limits
 
-- A running session holds its token in memory. When it next reads the store
-  depends on the CLI; see the end-to-end checklist for what has been
-  verified.
+- Running Claude sessions follow a switch on their next request (verified).
+  Running Codex sessions follow only once Codex's background server restarts.
 - Credential layouts are the CLIs' private business. Unknown shapes are
   refused rather than guessed at, so a CLI update can require an update here.
 - The usage endpoints are undocumented. Anthropic's terms say developers "may

@@ -264,6 +264,16 @@ class ClaudeBackend:
                     "claude-file-login",
                     "Claude keeps this login in .credentials.json instead of the Keychain",
                 )
+            config = load_json_object(read.identity.data, self.paths.identity_file)
+            if isinstance(config.get("oauthAccount"), dict):
+                # Claude says someone is logged in, but not where we look: our
+                # idea of its store is wrong, and writing there would mislead.
+                raise Unsupported(
+                    "claude-store-missing",
+                    "Claude's config names a logged-in account, but its credential is not in "
+                    f"the Keychain item {self.paths.keychain_service!r} for account "
+                    f"{self.paths.keychain_account!r}; refusing to guess",
+                )
             return None
         blob = self._blob(read.store.data)
         config = load_json_object(read.identity.data, self.paths.identity_file)

@@ -9,6 +9,7 @@ pre-image. A switch therefore never destroys the newest copy of a login.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import time
@@ -98,7 +99,7 @@ class Switcher:
     def undo(self, kind: str, *, force: bool = False) -> Outcome:
         backend = self.backends[kind]
         with self._locked(backend):
-            secret = self.store.get(f"undo:{kind}")
+            secret = self.store.get(undo_key(store_tag(backend)))
             if secret is None:
                 raise SwitchError("no-undo", f"nothing to undo for {kind}")
             target = backend.parse_secret(secret)
@@ -120,7 +121,7 @@ class Switcher:
             identity = live.identity
             name = label or (identity.email or identity.account_id).split("@")[0]
             profile = self.profiles.create(name, live)
-            self._write_expected(kind, live.fingerprint)
+            self._write_expected(store_tag(backend), live.fingerprint)
             return profile
 
     def save_from(self, kind: str, source: Backend, label: str | None = None) -> Profile:
@@ -153,11 +154,14 @@ class Switcher:
             if saved is None:
                 raise SwitchError("unsaved", f"{backend.title}: the live login is not saved yet")
             updated = self.profiles.update_secret(saved, live)
-            self._write_expected(kind, live.fingerprint)
+            self._write_expected(store_tag(backend), live.fingerprint)
             return updated
 
+    def has_undo(self, kind: str) -> bool:
+        return self.store.get(undo_key(store_tag(self.backends[kind]))) is not None
+
     def expected_fingerprint(self, kind: str) -> str | None:
-        expected = self._read_expected(kind)
+        expected = self._read_expected(store_tag(self.backends[kind]))
         value = expected.get("fingerprint") if expected else None
         return value if isinstance(value, str) else None
 
@@ -165,7 +169,7 @@ class Switcher:
         """Finish or undo an interrupted switch. Returns what happened, if anything."""
         backend = self.backends[kind]
         with self._store_locks(backend):
-            journal = self.journals.current(kind)
+            journal = self.journals.current(store_tag(backend))
             return self._resolve(backend, journal) if journal else None
 
     # -- locking -----------------------------------------------------------
@@ -181,7 +185,8 @@ class Switcher:
     def _locked(self, backend: Backend) -> Iterator[None]:
         """Store locks, plus: nothing pending, nothing unresolved, a setup we support."""
         with self._store_locks(backend):
-            journal = self.journals.current(backend.kind)
+            self._adopt_old_undo(backend)
+            journal = self.journals.current(store_tag(backend))
             if journal is not None:
                 self._resolve(backend, journal)
             rescues = self.journals.rescues(backend.kind)
@@ -245,6 +250,7 @@ class Switcher:
             target_components=backend.components(target),
             pre_fingerprint=live.fingerprint if live else None,
             pre_components=backend.components(live) if live else {},
+            store=store_tag(backend),
         )
         self.journals.begin(journal, live.secret if live else None)
         try:
@@ -280,6 +286,11 @@ class Switcher:
         """What a switch could not reach: sessions that keep the old account (V4, V5)."""
         sessions = self.scan(backend.kind)
         notes = []
+        if backend.kind == "claude" and os.environ.get(procscan.PINNING_VAR):
+            notes.append(
+                f"{procscan.PINNING_VAR} is set in herdr's own environment, so sessions it "
+                "starts are pinned to that token and ignore every switch"
+            )
         if sessions.pinned:
             notes.append(
                 f"{sessions.pinned} running session(s) will not follow: "
@@ -295,8 +306,8 @@ class Switcher:
     def _commit(self, journal: Journal) -> None:
         pre = self.journals.pre_secret(journal)
         if pre is not None:
-            self.store.put(f"undo:{journal.kind}", pre)
-        self._write_expected(journal.kind, journal.target_fingerprint)
+            self.store.put(undo_key(journal.store), pre)
+        self._write_expected(journal.store, journal.target_fingerprint)
         self.journals.close(journal)
 
     # -- recovery ----------------------------------------------------------
@@ -385,13 +396,18 @@ class Switcher:
             label = self._autosave_label(backend.kind, live)
             self.profiles.create(label, live)
             return [f"saved the outgoing login as {label!r}"]
-        expected = self._read_expected(backend.kind)
-        if expected is not None and expected.get("fingerprint") != live.fingerprint:
+        expected = self._read_expected(store_tag(backend))
+        updated = self.profiles.update_secret(saved, live)
+        # Logged in outside auth-picker: the live login is still the newest copy
+        # of that account (I1), so it is saved; the copy before it is kept as
+        # :prev, and `revert` goes back to it.
+        outside = expected is not None and expected.get("fingerprint") != live.fingerprint
+        if outside and updated.cred_hash != saved.cred_hash:
             return [
-                f"{saved.label} was logged in outside auth-picker, so its saved copy was "
-                "left as is; the live login is kept for undo (run sync to update it)"
+                f"{saved.label} was logged in outside auth-picker; its saved copy now "
+                f"holds that login (`revert {backend.kind} {saved.label}` restores the "
+                "one before)"
             ]
-        self.profiles.update_secret(saved, live)
         return []
 
     def _autosave_label(self, kind: str, live: Snapshot) -> str:
@@ -404,16 +420,36 @@ class Switcher:
             raise ProfileError("label", "could not name the outgoing login")
         return label
 
-    def _expected_path(self, kind: str) -> str:
-        return os.path.join(self.profiles.state_dir, f"expected-{kind}.json")
+    def _adopt_old_undo(self, backend: Backend) -> None:
+        """Move an undo slot from before stores were told apart (<= 1.0.0rc1)."""
+        old = self.store.get(f"undo:{backend.kind}")
+        if old is None:
+            return
+        new = undo_key(store_tag(backend))
+        if self.store.get(new) is None:
+            self.store.put(new, old)
+        self.store.delete(f"undo:{backend.kind}")
 
-    def _read_expected(self, kind: str) -> dict[str, Any] | None:
-        data = read_private(self._expected_path(kind), 4096)
+    def _expected_path(self, store: str) -> str:
+        return os.path.join(self.profiles.state_dir, f"expected-{store}.json")
+
+    def _read_expected(self, store: str) -> dict[str, Any] | None:
+        data = read_private(self._expected_path(store), 4096)
         return json.loads(data) if data else None
 
-    def _write_expected(self, kind: str, fingerprint: str) -> None:
+    def _write_expected(self, store: str, fingerprint: str) -> None:
         body = {"fingerprint": fingerprint, "at": self.clock()}
-        write_private(self._expected_path(kind), json.dumps(body).encode())
+        write_private(self._expected_path(store), json.dumps(body).encode())
+
+
+def store_tag(backend: Backend) -> str:
+    """Names one credential store: journals, undo and expected are kept per store."""
+    return f"{backend.kind}-{hashlib.sha256(backend.store_id.encode()).hexdigest()[:12]}"
+
+
+def undo_key(tag: str) -> str:
+    kind, digest = tag.split("-", 1)
+    return f"undo:{kind}:{digest}"
 
 
 class _Retry(Exception):

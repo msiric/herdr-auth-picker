@@ -204,3 +204,11 @@ def test_keychain_install_moves_the_credentials_file_mtime(home: Path, tmp_path:
         assert mcp_only.read_text() == '{"mcpOAuth": {}}'
     finally:
         subprocess.run(["/usr/bin/security", "delete-keychain", keychain], check=False)
+
+
+def test_an_account_in_the_config_with_no_credential_where_we_look_is_refused(
+    home: Path,
+) -> None:
+    write_claude_config(home / ".claude.json", "alice")  # Claude says alice is logged in
+    with pytest.raises(Unsupported, match="refusing to guess"):
+        _backend(home).read_live()

@@ -18,7 +18,7 @@ from auth_picker.journal import Journal, JournalStore
 from auth_picker.profiles import Profiles
 from auth_picker.redact import Sensitive
 from auth_picker.secretstore import FileStore
-from auth_picker.switch import NeedsConfirmation, Switcher, SwitchError
+from auth_picker.switch import NeedsConfirmation, Switcher, SwitchError, store_tag, undo_key
 from tests.fakes import (
     claude_blob,
     claude_secret,
@@ -69,7 +69,7 @@ class World:
         return self.live().identity.email
 
     def tx_file(self) -> Path:
-        return self.root / "state" / "tx" / "claude.json"
+        return self.root / "state" / "tx" / f"{store_tag(self.claude)}.json"
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def test_switch_moves_the_login_and_keeps_undo(world: World) -> None:
     assert world.who() == "bob@example.com"
     assert not world.tx_file().exists()
     assert (
-        world.profiles.store.get("undo:claude")
+        world.profiles.store.get(undo_key(store_tag(world.claude)))
         == world.claude.parse_secret(Sensitive(claude_secret("alice"))).secret
     )
 
@@ -196,6 +196,7 @@ def _crashed_switch(world: World) -> None:
         target_components=world.claude.components(target),
         pre_fingerprint=live.fingerprint,
         pre_components=world.claude.components(live),
+        store=store_tag(world.claude),
     )
     world.journals.begin(journal, live.secret)
 
@@ -212,7 +213,7 @@ def test_recovery_completes_a_finished_switch(world: World) -> None:
     _crashed_switch(world)
     world.log_in("bob")
     assert world.switcher.recover("claude") == "committed"
-    assert world.profiles.store.get("undo:claude") is not None
+    assert world.switcher.has_undo("claude")
 
 
 def test_recovery_keeps_everything_when_someone_else_wrote(world: World) -> None:
@@ -279,3 +280,23 @@ def test_a_codex_switch_says_when_the_background_server_needs_a_restart(
 def test_codex_near_renewal_with_nothing_running_just_switches(tmp_path: Path) -> None:
     w = _codex_world(tmp_path, running=0)
     assert w.switcher.switch("codex", "B").status == "switched"
+
+
+def test_a_login_made_outside_is_saved_and_can_be_reverted(world: World) -> None:
+    world.switcher.switch("claude", "B")
+    world.log_in("alice", generation=5)  # `/login` as alice, outside auth-picker
+    outcome = world.switcher.switch("claude", "B")
+    assert "logged in outside auth-picker" in outcome.notes[0]
+    a = world.profiles.find("claude", "A")
+    assert b"refresh-5" in world.profiles.secret(a)[0].reveal()  # the newest copy is kept (I1)
+
+    world.profiles.revert(a)
+    assert b"refresh-1" in world.profiles.secret(world.profiles.find("claude", "A"))[0].reveal()
+
+
+def test_another_stores_journal_is_left_alone(world: World) -> None:
+    foreign = world.root / "state" / "tx" / "claude-ffffffffffff.json"
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_text('{"not": "for this store"}')
+    assert world.switcher.switch("claude", "B").status == "switched"
+    assert foreign.exists()

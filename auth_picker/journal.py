@@ -36,6 +36,8 @@ class Journal:
     pre_fingerprint: str | None  # None: nobody was logged in
     pre_components: dict[str, str] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
+    # Which credential store this switch wrote to ("<kind>-<hash of store id>").
+    store: str = ""
 
     @property
     def pre_key(self) -> str:
@@ -60,8 +62,8 @@ class JournalStore:
 
     # -- journals ----------------------------------------------------------
 
-    def _tx_path(self, kind: str) -> str:
-        return os.path.join(self.tx_dir, f"{kind}.json")
+    def _tx_path(self, store: str) -> str:
+        return os.path.join(self.tx_dir, f"{store}.json")
 
     def begin(self, journal: Journal, pre: Sensitive | None) -> None:
         if pre is not None:
@@ -70,17 +72,18 @@ class JournalStore:
 
     def write(self, journal: Journal) -> None:
         secure_dir(self.tx_dir)
-        write_private(self._tx_path(journal.kind), json.dumps(asdict(journal)).encode())
+        write_private(self._tx_path(journal.store), json.dumps(asdict(journal)).encode())
 
-    def current(self, kind: str) -> Journal | None:
-        data = read_private(self._tx_path(kind), MAX_BYTES)
+    def current(self, store: str) -> Journal | None:
+        """The switch in flight for one credential store, if any."""
+        data = read_private(self._tx_path(store), MAX_BYTES)
         return Journal(**json.loads(data)) if data is not None else None
 
     def pre_secret(self, journal: Journal) -> Sensitive | None:
         return self.store.get(journal.pre_key) if journal.pre_fingerprint else None
 
     def close(self, journal: Journal) -> None:
-        remove_private(self._tx_path(journal.kind))  # journal first, then its secret
+        remove_private(self._tx_path(journal.store))  # journal first, then its secret
         self.store.delete(journal.pre_key)
 
     # -- rescues -----------------------------------------------------------

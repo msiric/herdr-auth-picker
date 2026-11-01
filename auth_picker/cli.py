@@ -15,6 +15,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from auth_picker import __version__, badge, herdr, migrate
 from auth_picker.app import App
@@ -169,16 +170,52 @@ def _cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_revert(args: argparse.Namespace) -> int:
+    app = _app(args)
+    profile = app.profiles.find(args.kind, args.name)
+    if not args.yes:
+        out(
+            f"would swap {profile.label}'s saved login with the one saved before it; "
+            "run again with --yes"
+        )
+        return 1
+    app.profiles.revert(profile)
+    out(f"{args.kind}: {profile.label} holds its previous login again (the newer one is kept)")
+    return 0
+
+
+def _adopt(app: App, rid: str, item: int, name: str | None) -> int:
+    match = [r for r in app.journals.rescues() if r.rid == rid]
+    if not match or not 0 <= item < len(match[0].kept):
+        raise AuthPickerError("missing", f"no rescue {rid} with item {item}")
+    rescue, entry = match[0], match[0].kept[item]
+    secret = app.store.get(entry["key"])
+    if secret is None:
+        raise AuthPickerError("missing", "that kept login is gone")
+    snapshot = app.backends[rescue.kind].parse_secret(secret)
+    saved = app.profiles.by_fingerprint(rescue.kind, snapshot.fingerprint)
+    if saved is not None:
+        app.profiles.update_secret(saved, snapshot)
+        out(f"{saved.label} now holds the kept login (its previous one is kept; see `revert`)")
+    else:
+        label = name or f"rescued {snapshot.identity.email or snapshot.identity.account_id[:8]}"
+        out(f"saved the kept login as {app.profiles.create(label[:40], snapshot).label}")
+    return 0
+
+
 def _cmd_rescue(args: argparse.Namespace) -> int:
     app = _app(args)
+    if args.adopt is not None:
+        return _adopt(app, args.adopt, args.item, args.name)
     rescues = app.journals.rescues()
     if args.clear is None:
         if not rescues:
             out("nothing to resolve")
         for rescue in rescues:
             out(f"{rescue.rid}  {rescue.kind}: {rescue.reason} ({_ago(rescue.created_at)})")
-            for entry in rescue.kept:
-                out(f"    kept: {entry['what']} {entry['describe']}".rstrip())
+            for n, entry in enumerate(rescue.kept):
+                out(f"    [{n}] kept: {entry['what']} {entry['describe']}".rstrip())
+            out(f"    keep one as a profile: rescue --adopt {rescue.rid} --item N")
         return 0
     match = [r for r in rescues if r.rid == args.clear]
     if not match:
@@ -312,7 +349,7 @@ def _status_kind(app: App, kind: str) -> None:
             f"  {mark} {profile.label:<20} {profile.identity.describe()}  "
             f"(used {_ago(profile.last_used_at)})"
         )
-    if app.store.get(f"undo:{kind}") is not None:
+    if app.switcher.has_undo(kind):
         out(f"  undo available: {kind}")
     for rescue in app.journals.rescues(kind):
         out(f"  ! {rescue.reason}: run `rescue` to review ({rescue.rid})")
@@ -366,6 +403,97 @@ def _cmd_import_legacy(args: argparse.Namespace) -> int:
 # -- parser -------------------------------------------------------------------
 
 
+Commands = Any  # argparse's _SubParsersAction, which typeshed keeps private
+
+
+def _add(commands: Commands, name: str, handler: Handler, text: str) -> argparse.ArgumentParser:
+    sub: argparse.ArgumentParser = commands.add_parser(name, help=text)
+    sub.set_defaults(handler=handler)
+    return sub
+
+
+def _kind_arg(sub: argparse.ArgumentParser, required: bool = False) -> None:
+    sub.add_argument("kind", choices=KINDS, nargs=None if required else "?")
+
+
+def _switching_commands(commands: Commands) -> None:
+    _add(commands, "status", _cmd_status, "show what is logged in, saved, and needs attention")
+    _add(commands, "ui", _cmd_ui, "the account picker (herdr runs this in an overlay)")
+    _add(commands, "open", _cmd_open, "open the account picker in herdr")
+    sub = _add(commands, "save", _cmd_save, "save the live login(s) as a profile")
+    _kind_arg(sub)
+    sub.add_argument("--name", help="what to call it (default: from the account)")
+    sub.add_argument(
+        "--from",
+        dest="source",
+        metavar="DIR",
+        help="codex only: import from another CODEX_HOME (how to add a second account)",
+    )
+    sub = _add(commands, "switch", _cmd_switch, "switch to a saved login")
+    _kind_arg(sub, required=True)
+    sub.add_argument("name")
+    sub.add_argument("--force", action="store_true", help="switch even if a renewal may be due")
+    for name, handler, text in (
+        ("next", _cmd_next, "switch to the next saved login"),
+        ("undo", _cmd_undo, "switch back to the login before the last switch"),
+    ):
+        sub = _add(commands, name, handler, text)
+        _kind_arg(sub)
+        sub.add_argument("--force", action="store_true", help="switch even if a renewal may be due")
+    sub = _add(commands, "sync", _cmd_sync, "update the live login's saved copy")
+    _kind_arg(sub)
+
+
+def _maintenance_commands(commands: Commands) -> None:
+    sub = _add(commands, "rename", _cmd_rename, "rename a profile")
+    _kind_arg(sub, required=True)
+    sub.add_argument("name")
+    sub.add_argument("new_name")
+    sub = _add(commands, "delete", _cmd_delete, "delete a profile (dry run without --yes)")
+    _kind_arg(sub, required=True)
+    sub.add_argument("name")
+    sub.add_argument("--yes", action="store_true")
+    sub = _add(
+        commands,
+        "revert",
+        _cmd_revert,
+        "give a profile back the login saved before its current one",
+    )
+    _kind_arg(sub, required=True)
+    sub.add_argument("name")
+    sub.add_argument("--yes", action="store_true")
+    sub = _add(
+        commands,
+        "rescue",
+        _cmd_rescue,
+        "review a stopped switch, keep a login from it, or clear it",
+    )
+    group = sub.add_mutually_exclusive_group()
+    group.add_argument("--clear", metavar="ID")
+    group.add_argument("--adopt", metavar="ID", help="save a kept login as a profile")
+    sub.add_argument("--item", type=int, default=0, help="which kept login (see the list)")
+    sub.add_argument("--name", help="profile name, if the account is not saved yet")
+    sub.add_argument("--yes", action="store_true")
+    sub = _add(commands, "cleanup", _cmd_cleanup, "delete saved secrets no profile refers to")
+    sub.add_argument("--yes", action="store_true")
+    _add(commands, "recover", _cmd_recover, "finish or undo an interrupted switch (startup hook)")
+    _add(commands, "stamp", _cmd_stamp, "refresh the account badge on agent panes")
+    sub = _add(
+        commands, "usage", _cmd_usage, "how much of each account's allowance is used (opt-in)"
+    )
+    _kind_arg(sub)
+    sub = _add(commands, "badge", _cmd_badge, "print the account badge (for a tab bar)")
+    sub.add_argument("kinds", nargs="*", metavar="KIND", help="claude and/or codex (default: both)")
+    sub = _add(
+        commands,
+        "import-legacy",
+        _cmd_import_legacy,
+        f"import saved logins from {migrate.LEGACY_ID} (dry run by default)",
+    )
+    sub.add_argument("--from", dest="source", help="the old plugin's state directory")
+    sub.add_argument("--apply", action="store_true", help="import, rather than only report")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="auth-picker",
@@ -377,66 +505,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", help="settings file (default: the plugin config dir)")
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
-
-    def add(name: str, handler: Handler, help: str) -> argparse.ArgumentParser:
-        sub = commands.add_parser(name, help=help)
-        sub.set_defaults(handler=handler)
-        return sub
-
-    def kind(sub: argparse.ArgumentParser, required: bool = False) -> None:
-        sub.add_argument("kind", choices=KINDS, nargs=None if required else "?")
-
-    add("status", _cmd_status, "show what is logged in, saved, and needs attention")
-    add("ui", _cmd_ui, "the account picker (herdr runs this in an overlay)")
-    add("open", _cmd_open, "open the account picker in herdr")
-    sub = add("save", _cmd_save, "save the live login(s) as a profile")
-    kind(sub)
-    sub.add_argument("--name", help="what to call it (default: from the account)")
-    sub.add_argument(
-        "--from",
-        dest="source",
-        metavar="DIR",
-        help="codex only: import from another CODEX_HOME (how to add a second account)",
-    )
-    sub = add("switch", _cmd_switch, "switch to a saved login")
-    kind(sub, required=True)
-    sub.add_argument("name")
-    sub.add_argument("--force", action="store_true", help="switch even if a renewal may be due")
-    for name, handler, text in (
-        ("next", _cmd_next, "switch to the next saved login"),
-        ("undo", _cmd_undo, "switch back to the login before the last switch"),
-    ):
-        sub = add(name, handler, text)
-        kind(sub)
-        sub.add_argument("--force", action="store_true", help="switch even if a renewal may be due")
-    sub = add("sync", _cmd_sync, "update the live login's saved copy")
-    kind(sub)
-    sub = add("rename", _cmd_rename, "rename a profile")
-    kind(sub, required=True)
-    sub.add_argument("name")
-    sub.add_argument("new_name")
-    sub = add("delete", _cmd_delete, "delete a profile (dry run without --yes)")
-    kind(sub, required=True)
-    sub.add_argument("name")
-    sub.add_argument("--yes", action="store_true")
-    sub = add("rescue", _cmd_rescue, "review or clear a stopped switch")
-    sub.add_argument("--clear", metavar="ID")
-    sub.add_argument("--yes", action="store_true")
-    sub = add("cleanup", _cmd_cleanup, "delete saved secrets no profile refers to")
-    sub.add_argument("--yes", action="store_true")
-    add("recover", _cmd_recover, "finish or undo an interrupted switch (startup hook)")
-    add("stamp", _cmd_stamp, "refresh the account badge on agent panes")
-    sub = add("usage", _cmd_usage, "how much of each account's allowance is used (opt-in)")
-    kind(sub)
-    sub = add("badge", _cmd_badge, "print the account badge (for a tab bar)")
-    sub.add_argument("kinds", nargs="*", metavar="KIND", help="claude and/or codex (default: both)")
-    sub = add(
-        "import-legacy",
-        _cmd_import_legacy,
-        f"import saved logins from {migrate.LEGACY_ID} (dry run by default)",
-    )
-    sub.add_argument("--from", dest="source", help="the old plugin's state directory")
-    sub.add_argument("--apply", action="store_true", help="import, rather than only report")
+    _switching_commands(commands)
+    _maintenance_commands(commands)
     return parser
 
 

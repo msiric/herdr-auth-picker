@@ -88,3 +88,13 @@ the README status, and tag `v1.0.0`.
 | 8 recovery drill | skipped on purpose with five live sessions; covered by tests |
 
 Tagged `v1.0.0-rc.1`. Promote to `v1.0.0` once V4 and V5 billing are confirmed.
+
+## Follow-up results (2026-11-01, later the same evening)
+
+| check | result |
+|-------|--------|
+| V5 billing | **pass**: in a running 2.1.303 session, a switch to an account out of usage made the next message hit its weekly limit; after `undo` the same session answered |
+| second Codex account | added safely with `CODEX_HOME=/tmp/… codex login` and `save codex --from`, because `codex login` revokes its home's existing login (found in Codex's source); the live login was untouched |
+| V4 Codex | **no immediate follow**: the CLI (0.166.0) talks to a background `codex app-server` that keeps its login in memory, new sessions included. After `codex app-server daemon restart`, a new session used the new account. No write-back. A switch now says so. |
+| independent review | four issues fixed: per-install Keychain namespace (with migration), store-keyed journals and undo, logins made outside saved with `:prev` plus `revert` and `rescue --adopt`, and Claude's fail-closed check for a credential not where its config says |
+| migration on this Mac | 22 items moved to the per-install service, all profiles read back |

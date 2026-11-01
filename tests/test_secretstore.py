@@ -200,3 +200,24 @@ def test_a_damaged_item_can_still_be_deleted(keychain: KeychainStore) -> None:
     )
     assert keychain.delete("profile:bad")
     assert keychain.keys() == []
+
+
+def test_each_state_dir_has_its_own_id(tmp_path: Path) -> None:
+    from auth_picker.secretstore import install_id  # noqa: PLC0415
+
+    first = install_id(str(tmp_path / "a"))
+    assert first == install_id(str(tmp_path / "a"))
+    assert first != install_id(str(tmp_path / "b"))
+    assert len(first) == 16
+
+
+def test_only_this_installs_keys_are_adopted_from_the_old_shared_service(tmp_path: Path) -> None:
+    from auth_picker.secretstore import adopt_legacy  # noqa: PLC0415
+
+    legacy = FileStore(str(tmp_path / "legacy"))
+    legacy.put("profile:mine", Sensitive(b"mine"))
+    legacy.put("profile:someone-elses", Sensitive(b"theirs"))
+    store = FileStore(str(tmp_path / "new"))
+    assert adopt_legacy(store, legacy, ["profile:mine", "undo:claude"]) == ["profile:mine"]
+    assert store.get("profile:mine") == Sensitive(b"mine")
+    assert legacy.keys() == ["profile:someone-elses"]

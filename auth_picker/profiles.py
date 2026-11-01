@@ -293,6 +293,32 @@ class Profiles:
             self._replace(updated)
             return updated
 
+    def revert(self, profile: Profile) -> Profile:
+        """Swap a profile's saved login with the generation before it."""
+        with self.locked():
+            current = self.get(profile.id)
+            now_secret = self.store.get(current.key)
+            prev_secret = self.store.get(current.prev_key)
+            if prev_secret is None or now_secret is None:
+                raise ProfileError("no-previous", f"{current.label} has no earlier login saved")
+            previous = self.backends[current.kind].parse_secret(prev_secret)
+            if previous.fingerprint != current.fingerprint:
+                raise ProfileError("identity", f"the earlier login is not {current.label}'s")
+            self.store.put(current.prev_key, now_secret)
+            self.store.put(current.key, prev_secret)
+            updated = replace(
+                current,
+                identity=previous.identity,
+                updated_at=self.clock(),
+                refresh_expires_at=previous.refresh_expires_at,
+                cred_hash=previous.cred_hash,
+                refresh_hash=previous.refresh_hash,
+                prev_cred_hash=current.cred_hash,
+                prev_refresh_hash=current.refresh_hash,
+            )
+            self._replace(updated)
+            return updated
+
     def rename(self, profile: Profile, label: str) -> Profile:
         with self.locked():
             current = self.get(profile.id)

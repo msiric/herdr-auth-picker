@@ -143,9 +143,12 @@ for the compare-and-swap).
      Done last, so running sessions re-read only once both stores agree.
 - **Fail closed** if:
   - the computed Keychain item is absent while `oauthAccount` is present;
-  - `CLAUDE_CODE_OAUTH_TOKEN` is set in our own environment (the user is
-    pinned; report it);
   - the blob or identity shape is unknown.
+- **Warn** (not refuse) when `CLAUDE_CODE_OAUTH_TOKEN` is set in herdr's own
+  environment, or in a running session: those sessions ignore the store, but
+  the switch is still right for every other one. The account name follows
+  Claude exactly: `$USER`, else the system user name, and `claude-code-user`
+  if that name has characters outside `[a-zA-Z0-9._-]`.
 
 ### Codex
 
@@ -176,10 +179,10 @@ State: `$HERDR_PLUGIN_STATE_DIR` (0700, owner verified).
 index.json            {"schema":1,"profiles":[{id, kind, label, identity, fingerprint,
                        created_at, updated_at, last_used_at, refresh_expires_at,
                        cred_hash}]}
-tx/<txid>.json        transaction journal (non-secret): kind, phase, target_id,
-                       hashes of pre-image and installed value per component
+tx/<kind>-<store>.json  transaction journal (non-secret), one per credential store:
+                       phase, target, hashes of pre-image and installed value
 rescue/<rid>.json     unresolved anomaly (non-secret): what was observed, secret refs
-expected-<kind>.json  {fingerprint, cred_hash, installed_at}: write-back detection
+expected-<kind>-<store>.json  {fingerprint, at}: logins made outside auth-picker
 usage-cache.json      {profile_id: {read_at, windows, error, retry_after}} (non-secret)
 audit.jsonl           append-only events, no secrets, rotated at 1 MiB
 lock                  state lock (our index, journal, cache)
@@ -191,13 +194,15 @@ installs, sessions or the tab bar can't interleave:
 store identity is the canonical credential path or Keychain service+account,
 plus the identity file path. Lock order is always store lock, then state lock.
 
-Secret-store keys (Keychain service `msiric.auth-picker`, or file names):
+Secret-store keys (Keychain service `msiric.auth-picker.<install id>`, one per
+state directory, so two installs never see or clean up each other's items; or
+file names under `<state dir>/secrets`):
 
 ```
 profile:<id>          current generation of a profile
 profile:<id>:prev     previous generation (one level, for reverting a bad update)
 tx:<txid>:pre         immutable pre-image of a transaction ({"absent": true} if logged out)
-undo:<kind>           user undo; written only after a switch commits
+undo:<kind>:<store>   user undo, per credential store; written only after a commit
 rescue:<rid>:<n>      generations kept when an anomaly stopped a switch
 ```
 
@@ -292,6 +297,10 @@ auto-commits or auto-restores a value the plugin didn't write.
   automatic profile update for that kind until the user confirms.
 - **Updating a profile from live** (switch-away, `save`, the explicit `sync`
   action) requires all of I6. It moves the old generation to `:prev` first.
+- **A login made outside auth-picker** (identity drift) is still saved to its
+  profile on switch-away, because it is that account's newest copy (I1); the
+  copy before it stays as `:prev`, and `revert` swaps them back. (Leaving it
+  only in `undo` lost it on the next switch; found in review.)
 - Never on UI ticks, `list`, `badge` or usage reads.
 - **Limit, stated plainly.** Claude's tokens are opaque, so nothing offline
   binds a credential to an account. These checks catch every case where a token
@@ -377,6 +386,7 @@ auto-commits or auto-restores a value the plugin didn't write.
 | Codex store mode enum `file` (default) / `keyring` / `auto` / `ephemeral` | `openai/codex` `config/src/types.rs` |
 | Codex serializes credential commits with an flock on `<auth.json>.lock`, and has compare-and-save | `openai/codex` `login/src/auth/storage_commit.rs` (main) |
 | Anthropic: developers "may not collect, store, or intermediate Claude.ai credentials or session tokens" | code.claude.com legal-and-compliance |
+| `codex login` (0.163.0) revokes the refresh token of whatever login its CODEX_HOME held, even another account's | `openai/codex` @ `rust-v0.163.0` `cli/src/login.rs` (`clear_existing_auth_before_login`) |
 | `security -i` runs commands longer than about 4,090 characters in pieces, storing a truncated value; the `-w` prompt silently keeps only 128 characters | reproduced on throwaway and dummy items (found by the end-to-end run) |
 
 ## 11. To verify in later phases
@@ -386,8 +396,8 @@ auto-commits or auto-restores a value the plugin didn't write.
 | V1 | ~~Does Claude lock `~/.claude.json`?~~ **Yes**, plus a refresh lock and a storage-write lock (§3). | 4 ✔ |
 | V2 | ~~`trustedDeviceToken` scope?~~ **Account-scoped** (§3). | 4 ✔ |
 | V3 | ~~Codex 0.163.0 lock?~~ **No.** It writes in place, without a lock (§3). | 4 ✔ |
-| V4 | Does a running Codex follow an `auth.json` swap, and does it write back after refresh? **Not verified** (no second Codex account). | 10 |
-| V5 | ~~Does a running Claude session follow a Keychain swap?~~ **Partly ✔** (2026-11-01): a running 2.1.303 session's `/status` account and account-scoped settings followed a switch and an undo, with `.credentials.json` absent. Billing to the new account not confirmed by a request. | 10 |
+| V4 | ~~Does a running Codex follow an `auth.json` swap?~~ **No, until its background server restarts** (2026-11-01, Codex 0.166.0): sessions talk to `codex app-server`, which keeps its login in memory; new sessions too. After `codex app-server daemon restart` a new session used the new account. No write-back seen, during the session or on restart. A switch now says so. | 10 ✔ |
+| V5 | ~~Does a running Claude session follow a Keychain swap?~~ **Yes** (2026-11-01, a running 2.1.303 session): after a switch to an account out of usage, its next message hit that account's weekly limit; after `undo`, the same session answered. | 10 ✔ |
 | V6 | ~~herdr working directory and state dir?~~ The working directory is the plugin root; state is `~/.local/state/herdr/plugins/<id>` (0755, which we tighten), and config is `~/.config/herdr/plugins/config/<id>`. | 7 ✔ |
 | V7 | ~~Do the usage endpoints accept an honest User-Agent?~~ **Yes** (2026-11-01): both answered with usage for `msiric-auth-picker/0.1.0`. | 10 ✔ |
 | V8 | Linux paths/behaviour: CI only, as there is no Linux machine here. | 4/10 |

@@ -162,3 +162,20 @@ def test_a_second_codex_account_comes_from_a_separate_home(
     live_home = str(world.home / ".codex")
     assert run(capsys, "save", "codex", "--from", live_home)[0] == 1
     assert run(capsys, "save", "claude", "--from", str(other))[0] == 1
+
+
+def test_a_kept_login_can_be_adopted_from_a_rescue(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tests.test_switch import _crashed_switch  # noqa: PLC0415
+
+    world.log_in("alice")
+    world.save("A", "alice")
+    world.save("B", "bob")
+    _crashed_switch(world)
+    world.log_in("carol")  # an outside writer: recovery keeps both and stops
+    assert world.switcher.recover("claude") == "rescued"
+    rid = world.journals.rescues()[0].rid
+    assert "--adopt" in run(capsys, "rescue")[1]
+    assert run(capsys, "rescue", "--adopt", rid, "--item", "1")[0] == 0
+    assert world.profiles.find("claude", "rescued carol@example.com")
