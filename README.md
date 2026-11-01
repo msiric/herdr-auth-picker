@@ -208,7 +208,7 @@ directories, which the import lists: they hold logins in plaintext.
 ## Development
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements-dev.txt
 .venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/mypy && .venv/bin/pytest
 ```
 
