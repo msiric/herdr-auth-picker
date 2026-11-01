@@ -19,7 +19,11 @@ def _manifest() -> dict[str, Any]:
 
 def _commands() -> list[list[str]]:
     manifest = _manifest()
-    entries = [*manifest.get("actions", []), *manifest.get("panes", []), *manifest.get("startup", [])]
+    entries = [
+        *manifest.get("actions", []),
+        *manifest.get("panes", []),
+        *manifest.get("startup", []),
+    ]
     return [entry["command"] for entry in entries]
 
 

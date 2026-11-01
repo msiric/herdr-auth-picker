@@ -60,7 +60,11 @@ def test_confined_imports_and_calls(path: Path) -> None:
     problems: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import | ast.ImportFrom):
-            names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            names = (
+                [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+            )
             for name in names:
                 root = name.split(".")[0]
                 allowed = CONFINED_IMPORTS.get(root)
