@@ -55,7 +55,9 @@ def write_claude_config(path: Path, who: str | None, **extra: Any) -> None:
     path.write_text(json.dumps(config, indent=2))
 
 
-def codex_auth(who: str, generation: int = 1, workspace: str | None = None) -> dict[str, Any]:
+def codex_auth(
+    who: str, generation: int = 1, workspace: str | None = None, expires_in: int = 3600
+) -> dict[str, Any]:
     account = workspace or f"ws-{who}"
     id_claims = {
         "email": f"{who}@example.com",
@@ -70,7 +72,7 @@ def codex_auth(who: str, generation: int = 1, workspace: str | None = None) -> d
         "OPENAI_API_KEY": None,
         "tokens": {
             "id_token": jwt(id_claims),
-            "access_token": jwt({"exp": NOW + 3600, "g": generation}),
+            "access_token": jwt({"exp": NOW + expires_in, "g": generation}),
             "refresh_token": f"rt_{who}_{generation}",
             "account_id": account,
         },

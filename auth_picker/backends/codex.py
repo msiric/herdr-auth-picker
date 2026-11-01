@@ -27,7 +27,7 @@ from auth_picker.backends.base import (
     sha256_hex,
     text,
 )
-from auth_picker.errors import Conflict
+from auth_picker.errors import Conflict, StaleSnapshot
 from auth_picker.foreignlock import Flock, Held, hold_all
 from auth_picker.fsutil import ForeignFile, read_foreign, write_foreign
 from auth_picker.redact import Sensitive
@@ -48,10 +48,19 @@ def codex_home(env: dict[str, str] | None = None) -> str:
 class CodexBackend:
     kind = "codex"
     title = "Codex"
+    # Codex 0.163.0 renews and rewrites auth.json with no lock at all.
+    renewal_guard = True
 
     def __init__(self, home: str) -> None:
         self.home = home
         self.auth_file = os.path.join(home, "auth.json")
+
+    @property
+    def store_id(self) -> str:
+        return "codex|" + os.path.realpath(self.auth_file)
+
+    def components(self, snapshot: Snapshot) -> dict[str, str]:
+        return {"auth": sha256_hex(canonical(secret_object(snapshot.secret, self.kind)["auth"]))}
 
     def check_supported(self) -> None:
         if not os.path.isdir(self.home):
@@ -156,11 +165,14 @@ class CodexBackend:
         if (now is None) != (before is None) or (
             now is not None and before is not None and now.version != before.version
         ):
-            raise Conflict("codex-changed", "Codex's login changed while switching")
+            raise StaleSnapshot("codex-changed", "Codex's login changed while switching")
         held.refresh()
-        write_foreign(
-            self.auth_file,
-            (json.dumps(target["auth"], indent=2, ensure_ascii=False) + "\n").encode(),
-            now,
-            new_mode=0o600,
-        )
+        try:
+            write_foreign(
+                self.auth_file,
+                (json.dumps(target["auth"], indent=2, ensure_ascii=False) + "\n").encode(),
+                now,
+                new_mode=0o600,
+            )
+        except Conflict as exc:  # one file: a refused write means nothing changed
+            raise StaleSnapshot(exc.code, exc.message) from None

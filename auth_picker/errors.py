@@ -35,5 +35,9 @@ class Conflict(AuthPickerError):
     """A file changed between our read and our write."""
 
 
+class StaleSnapshot(Conflict):
+    """The login moved since it was read, and nothing at all was written."""
+
+
 class ProcessFailed(AuthPickerError):
     """A command timed out, produced too much output, or could not start."""

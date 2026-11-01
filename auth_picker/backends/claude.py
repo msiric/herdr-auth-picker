@@ -30,7 +30,7 @@ from auth_picker.backends.base import (
     sha256_hex,
     text,
 )
-from auth_picker.errors import Conflict
+from auth_picker.errors import Conflict, StaleSnapshot
 from auth_picker.foreignlock import DirLock, Held, hold_all
 from auth_picker.fsutil import ForeignFile, read_foreign, touch, write_foreign
 from auth_picker.redact import Sensitive
@@ -131,7 +131,10 @@ class FileCredential:
         return StoreRead(found.data, found) if found is not None else None
 
     def write(self, data: bytes, expect: StoreRead | None) -> None:
-        write_foreign(self.path, data, expect.file if expect else None, new_mode=0o600)
+        try:
+            write_foreign(self.path, data, expect.file if expect else None, new_mode=0o600)
+        except Conflict as exc:
+            raise StaleSnapshot(exc.code, exc.message) from None
 
 
 CredentialStore = KeychainCredential | FileCredential
@@ -157,6 +160,8 @@ def _ms(value: Any) -> float | None:
 class ClaudeBackend:
     kind = "claude"
     title = "Claude Code"
+    # Claude's own refresh lock, which a switch holds, stops a renewal mid-switch.
+    renewal_guard = False
 
     def __init__(self, paths: ClaudePaths, store: CredentialStore | None = None) -> None:
         self.paths = paths
@@ -174,6 +179,26 @@ class ClaudeBackend:
         self.store = store
 
     # -- discovery ---------------------------------------------------------
+
+    @property
+    def store_id(self) -> str:
+        p = self.paths
+        return "|".join(
+            (
+                "claude",
+                p.keychain_service,
+                p.keychain_account,
+                os.path.realpath(p.identity_file),
+                os.path.realpath(p.credentials_file),
+            )
+        )
+
+    def components(self, snapshot: Snapshot) -> dict[str, str]:
+        obj = secret_object(snapshot.secret, self.kind)
+        return {
+            "credentials": sha256_hex(canonical(obj["credentials"])),
+            "identity": sha256_hex(canonical(obj["oauth_account"])),
+        }
 
     def check_supported(self) -> None:
         if not os.path.isdir(self.paths.config_dir):
@@ -309,9 +334,9 @@ class ClaudeBackend:
             and before.store is not None
             and now.store.data != before.store.data
         ):
-            raise Conflict("claude-changed", "Claude's login changed while switching")
+            raise StaleSnapshot("claude-changed", "Claude's login changed while switching")
         if before is not None and now.identity.version != before.identity.version:
-            raise Conflict("claude-changed", "Claude's config changed while switching")
+            raise StaleSnapshot("claude-changed", "Claude's config changed while switching")
 
         blob = self._blob(now.store.data) if now.store is not None else {}
         merged = {k: blob[k] for k in MACHINE_KEYS if k in blob}

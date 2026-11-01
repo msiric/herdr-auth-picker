@@ -74,6 +74,13 @@ class Issue:
 class Backend(Protocol):
     kind: str
     title: str
+    # True when the CLI can renew its token mid-switch with no lock of its own
+    # to stop it, so a switch near expiry asks first (design §8).
+    renewal_guard: bool
+
+    @property
+    def store_id(self) -> str: ...
+    def components(self, snapshot: Snapshot) -> dict[str, str]: ...
 
     def check_supported(self) -> None: ...
     def read_live(self) -> Snapshot | None: ...
