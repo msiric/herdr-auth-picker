@@ -13,6 +13,7 @@ import platform
 import re
 import uuid
 
+from auth_picker.errors import AuthPickerError
 from auth_picker.fsutil import create_private, read_private
 from auth_picker.secretstore.base import SERVICE, SecretStore, check_key
 from auth_picker.secretstore.filestore import FileStore
@@ -63,19 +64,28 @@ def default_store(state_dir: str, *, create: bool = True) -> SecretStore:
     return FileStore(os.path.join(state_dir, "secrets"))
 
 
-def adopt_legacy(store: SecretStore, legacy: SecretStore, keys: list[str]) -> list[str]:
+def adopt_legacy(
+    store: SecretStore, legacy: SecretStore, keys: list[str]
+) -> tuple[list[str], list[str]]:
     """Move ``keys`` from the shared service used up to 1.0.0rc1 into ``store``.
 
-    Only keys this install's index names are moved; anything else under the
-    old service is left alone, since it may belong to another install.
+    Only keys this install's state names are moved; anything else under the
+    old service is left alone, since it may belong to another install. A key
+    that cannot be moved (locked keychain, damaged item) is skipped and
+    returned in the second list, to be tried again later. Returns (moved, failed).
     """
-    moved = []
+    moved: list[str] = []
+    failed: list[str] = []
     for key in keys:
-        value = legacy.get(key)
-        if value is None:
+        try:
+            value = legacy.get(key)
+            if value is None:
+                continue
+            if store.get(key) is None:
+                store.put(key, value)  # put() reads back and compares
+            legacy.delete(key)
+        except AuthPickerError:
+            failed.append(key)
             continue
-        if store.get(key) is None:
-            store.put(key, value)  # put() reads back and compares
-        legacy.delete(key)
         moved.append(key)
-    return moved
+    return moved, failed

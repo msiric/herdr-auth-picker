@@ -98,3 +98,4 @@ Tagged `v1.0.0-rc.1`. Promote to `v1.0.0` once V4 and V5 billing are confirmed.
 | V4 Codex | **no immediate follow**: the CLI (0.166.0) talks to a background `codex app-server` that keeps its login in memory, new sessions included. After `codex app-server daemon restart`, a new session used the new account. No write-back. A switch now says so. |
 | independent review | four issues fixed: per-install Keychain namespace (with migration), store-keyed journals and undo, logins made outside saved with `:prev` plus `revert` and `rescue --adopt`, and Claude's fail-closed check for a credential not where its config says |
 | migration on this Mac | 22 items moved to the per-install service, all profiles read back |
+| final review | three passes of independent review; every finding fixed and covered by a test. Released as `v1.0.0`. |

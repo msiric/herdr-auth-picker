@@ -158,7 +158,9 @@ class Switcher:
             return updated
 
     def has_undo(self, kind: str) -> bool:
-        return self.store.get(undo_key(store_tag(self.backends[kind]))) is not None
+        tagged = undo_key(store_tag(self.backends[kind]))
+        # The old name is renamed on the next switch (see _adopt_old_undo).
+        return any(self.store.get(key) is not None for key in (tagged, f"undo:{kind}"))
 
     def expected_fingerprint(self, kind: str) -> str | None:
         expected = self._read_expected(store_tag(self.backends[kind]))

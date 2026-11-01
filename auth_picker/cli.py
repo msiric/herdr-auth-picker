@@ -353,6 +353,11 @@ def _cmd_status(args: argparse.Namespace) -> int:
         out(f"config error, other commands will refuse to run: {app.config_error}")
     for kind in KINDS:
         _status_kind(app, kind)
+    for key in app.unmoved:
+        out(
+            f"note: {key} could not yet be moved to this install's keychain items; "
+            "it stays where it was and is retried next time (is the keychain unlocked?)"
+        )
     for orphan in app.profiles.orphans():
         out(
             f"note: unreferenced saved secret {orphan} (left by an interrupted save; see `cleanup`)"

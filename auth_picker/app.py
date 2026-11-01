@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from auth_picker import config, paths
 from auth_picker.backends import KINDS, default_backends
@@ -34,6 +34,8 @@ class App:
     switcher: Switcher
     usage: Usage | None = None
     config_error: str | None = None
+    # Items the upgrade from 1.0.0rc1 could not move yet (shown by status).
+    unmoved: list[str] = field(default_factory=list)
 
     @classmethod
     def load(
@@ -57,11 +59,10 @@ class App:
         backends = default_backends()
         profiles = Profiles(state, store, backends, settings.lock_timeout_s)
         journals = JournalStore(state, store)
-        if not readonly:
-            _adopt_legacy(state, store, profiles, journals, backends)
+        unmoved = [] if readonly else _adopt_legacy(state, store, profiles, journals, backends)
         switcher = Switcher(profiles, journals, lock_timeout=settings.lock_timeout_s)
         usage = Usage(state, settings.usage.ttl_s) if settings.usage.enabled else None
-        return cls(settings, store, backends, profiles, journals, switcher, usage, error)
+        return cls(settings, store, backends, profiles, journals, switcher, usage, error, unmoved)
 
 
 _ADOPTED = "keychain-per-install"
@@ -75,29 +76,42 @@ def _adopt_legacy(
     backends: dict[str, Backend],
     *,
     legacy: SecretStore | None = None,
-) -> None:
-    """Once per state dir, after upgrading from 1.0.0rc1.
+) -> list[str]:
+    """Once per state dir, after upgrading from 1.0.0rc1. Returns keys not yet moved.
 
     Move this install's items off the old shared Keychain service: profiles,
-    undo, the pre-image of an interrupted switch and kept rescue logins. Move
-    an interrupted switch's journal to its store's name, so recovery finds it.
+    undo, every journal's pre-image and every kept rescue login. Only then is
+    an old-style journal renamed for its store, so a failure part-way never
+    loses track of a pre-image. Nothing here stops a command: what could not
+    move is reported, and tried again next time; the marker is written only
+    once everything has moved.
     """
     marker = os.path.join(state, _ADOPTED)
     if not isinstance(store, KeychainStore) or os.path.exists(marker):
-        return
+        return []
     with profiles.locked():
         keys = [k for p in profiles.all() for k in (p.key, p.prev_key)]
         keys += [f"undo:{kind}" for kind in KINDS]
         keys += [entry["key"] for rescue in journals.rescues() for entry in rescue.kept]
-        for kind in KINDS:
-            old = os.path.join(journals.tx_dir, f"{kind}.json")
-            data = read_private(old, 256 * 1024)
-            if data is None:
+        old_style: list[tuple[str, Journal]] = []
+        names = sorted(os.listdir(journals.tx_dir)) if os.path.isdir(journals.tx_dir) else []
+        for name in names:
+            data = read_private(os.path.join(journals.tx_dir, name), 256 * 1024)
+            if data is None or not name.endswith(".json"):
                 continue
             journal = Journal(**json.loads(data))
-            journal.store = store_tag(backends[kind])
             keys.append(journal.pre_key)
+            if name == f"{journal.kind}.json":
+                old_style.append((name, journal))
+        _moved, failed = adopt_legacy(
+            store, legacy or KeychainStore(SERVICE, keychain=store.keychain), keys
+        )
+        for name, journal in old_style:
+            if journal.pre_key in failed:
+                continue
+            journal.store = store_tag(backends[journal.kind])
             journals.write(journal)
-            remove_private(old)
-        adopt_legacy(store, legacy or KeychainStore(SERVICE, keychain=store.keychain), keys)
-        write_private(marker, b"")
+            remove_private(os.path.join(journals.tx_dir, name))
+        if not failed:
+            write_private(marker, b"")
+        return failed

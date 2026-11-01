@@ -1,6 +1,6 @@
 [project]
 name = "herdr-auth-picker"
-version = "1.0.0rc1"
+version = "1.0.0"
 description = "Switch Claude Code and Codex logins in herdr, without losing them."
 requires-python = ">=3.11"
 dependencies = []

@@ -219,7 +219,7 @@ def test_only_this_installs_keys_are_adopted_from_the_old_shared_service(tmp_pat
     legacy.put("profile:mine", Sensitive(b"mine"))
     legacy.put("profile:someone-elses", Sensitive(b"theirs"))
     store = FileStore(str(tmp_path / "new"))
-    assert adopt_legacy(store, legacy, ["profile:mine", "undo:claude"]) == ["profile:mine"]
+    assert adopt_legacy(store, legacy, ["profile:mine", "undo:claude"]) == (["profile:mine"], [])
     assert store.get("profile:mine") == Sensitive(b"mine")
     assert legacy.keys() == ["profile:someone-elses"]
 
@@ -287,3 +287,58 @@ def test_upgrading_from_rc1_moves_journals_and_rescues_too(
     assert moved is not None
     assert moved.txid == "abc"
     assert not (state / "tx" / "claude.json").exists()
+
+
+@on_macos
+def test_a_migration_that_fails_part_way_loses_track_of_nothing(
+    keychain: KeychainStore, tmp_path: Path
+) -> None:
+    from auth_picker.app import _adopt_legacy  # noqa: PLC0415
+    from auth_picker.journal import JournalStore  # noqa: PLC0415
+    from auth_picker.profiles import Profiles  # noqa: PLC0415
+    from auth_picker.switch import store_tag  # noqa: PLC0415
+    from tests.fakes import make_backends  # noqa: PLC0415
+
+    class Flaky(KeychainStore):
+        """The old service, refusing one item the first time."""
+
+        refused = False
+
+        def get(self, key: str) -> Sensitive | None:
+            if key == "tx:abc:pre" and not Flaky.refused:
+                Flaky.refused = True
+                raise KeychainError("keychain-read", "locked")
+            return super().get(key)
+
+    state = tmp_path / "state"
+    new = KeychainStore(keychain.service + "-new", keychain=keychain.keychain)
+    legacy = Flaky(keychain.service, keychain=keychain.keychain)
+    backends = make_backends(tmp_path)
+    profiles = Profiles(str(state), new, backends)
+    journals = JournalStore(str(state), new)
+    keychain.put("tx:abc:pre", Sensitive(b"pre-image"))
+    (state / "tx").mkdir(parents=True)
+    (state / "tx" / "claude.json").write_text(
+        json.dumps(
+            {
+                "txid": "abc",
+                "kind": "claude",
+                "phase": "installing",
+                "target_label": "B",
+                "target_fingerprint": "f",
+                "target_components": {},
+                "pre_fingerprint": "p",
+            }
+        )
+    )
+
+    assert _adopt_legacy(str(state), new, profiles, journals, backends, legacy=legacy) == [
+        "tx:abc:pre"
+    ]
+    assert (state / "tx" / "claude.json").exists()  # not renamed: its pre-image did not move
+    assert not (state / "keychain-per-install").exists()
+
+    assert _adopt_legacy(str(state), new, profiles, journals, backends, legacy=legacy) == []
+    assert new.get("tx:abc:pre") == Sensitive(b"pre-image")
+    assert journals.current(store_tag(backends["claude"])) is not None
+    assert (state / "keychain-per-install").exists()
