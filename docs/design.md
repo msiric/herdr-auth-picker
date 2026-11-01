@@ -110,15 +110,30 @@ for the compare-and-swap).
     `^[a-zA-Z0-9._-]+$`.
   - Linux: `<config dir>/.credentials.json`.
 - **Blob keys:** explicit allowlists, no default bucket.
-  - `ACCOUNT_KEYS = {claudeAiOauth}`. `trustedDeviceToken` stays unsupported
-    until V2 classifies it; then it moves into one of the two sets.
+  - `ACCOUNT_KEYS = {claudeAiOauth, trustedDeviceToken,
+    trustedDeviceEnrolledAfterRefusalAtMs}`. The device token is enrolled with
+    the account's own credentials, and cleared for accounts that aren't
+    subscribers (V2). If that's ever wrong, Claude re-enrolls after a 403.
   - `MACHINE_KEYS = {mcpOAuth}`. These are **preserved from the live blob on
     install**. The original plugin swapped the whole blob, clobbering MCP
     logins (audit F27).
   - Any key in neither set → fail closed: "unsupported Claude credential layout
     (key `X`)". A new key then needs one reviewed line, not a guess.
-- **Identity file.** `<home>/.claude.json` → `oauthAccount` (`accountUuid`,
-  `organizationUuid`, `emailAddress`, `organizationName`, …).
+- **Identity file.** Resolved as Claude resolves it:
+  `<config dir>/.config.json` if that is a non-empty regular file, otherwise
+  `$CLAUDE_CONFIG_DIR/.claude.json` or `~/.claude.json`. It holds
+  `oauthAccount` (`accountUuid`, `organizationUuid`, `emailAddress`,
+  `organizationName`, …).
+- **Claude's own locks** (2.1.309, V1): directory locks, where taking the lock
+  means `mkdir`, the holder keeps the directory's mtime fresh, and releasing
+  means `rmdir`. A switch takes all of them, all-or-nothing:
+  - `<config dir>/.oauth_refresh.lock` (stale 60 s), plus the legacy
+    `<realpath(config dir)>.lock`. Claude holds these while refreshing, and
+    re-reads the store after taking them.
+  - `<config dir>/.storage-write.lock` (stale 15 s). Claude holds it for every
+    credential-store write.
+  - `<identity file>.lock` (stale 10 s). Claude holds it for every config
+    write.
 - **Fingerprint.** `sha256("claude|" + accountUuid + "|" + organizationUuid)`.
   This tells apart one user with two orgs (audit F12).
 - **Install order:**
@@ -140,9 +155,12 @@ for the compare-and-swap).
 - **Supported modes.** Only when `$CODEX_HOME/config.toml` has no
   `cli_auth_credentials_store` or has `"file"`. `keyring`, `auto` and
   `ephemeral` are refused with an explanation.
-- **Locking.** Hold an `flock` on `<resolved auth.json>.lock`, the commit lock
-  Codex itself takes (V3), for the whole read-modify-write. Plus a version
-  check on (mtime_ns, size, ino).
+- **Locking.** Codex 0.163.0 takes **no lock** and rewrites `auth.json`
+  **in place** (truncate + write; V3). A read can therefore see a partial file,
+  so a parse failure means "being written", and we retry it, never treat it as
+  logged out. Newer Codex takes an `flock` on `<resolved auth.json>.lock`. We
+  take it too (harmless where unused), plus a version check on (mtime_ns, size,
+  ino). With no lock on 0.163.0, the renewal guard (§8) applies to Codex.
 - **Identity.** From the `id_token` claims under
   `https://api.openai.com/auth`: `chatgpt_account_id`, plus `chatgpt_user_id`
   or `sub`. `tokens.account_id` must equal `chatgpt_account_id`, or the snapshot
@@ -290,7 +308,8 @@ auto-commits or auto-restores a value the plugin didn't write.
 | our state | state lock, taken after the store lock |
 | Codex `auth.json` | flock on `auth.json.lock` (Codex's own commit lock, V3) plus a version check. Codex's writes are atomic, so we can't lose its update |
 | `~/.claude.json` | Claude's lock if it has one (V1). Otherwise a version check on (mtime_ns, size, ino) immediately before rename, with up to 3 retries. The residual window is microseconds; rollback patches only `oauthAccount`, and only while it still equals our value |
-| Claude Keychain item | no shared lock exists. (1) **Renewal guard:** if `claude` processes are running *and* the live access token is within 10 min of `expiresAt` or past it, those sessions may renew at any moment. The switch then asks for confirmation ("a running session may renew this login now; switching could strand the new token — continue?"), and `next`/`switch` refuse unless `--force`. With no running sessions there's no race, so no guard. (2) Re-read right before writing; any change restarts the switch. (3) Read back after writing; a mismatch opens a rescue. |
+| Claude credential store and identity file | **Claude's own locks** (§3), taken all-or-nothing: try each in a fixed order (refresh, legacy, storage-write, identity); if one is busy, release everything and retry with jitter until the timeout. No partial holding, so no deadlock with Claude. A lock is broken only if its mtime is older than twice its stale period (a crashed holder), as Claude itself would. Held for well under stale/2. The protocol is pinned to tested Claude versions; on an untested version the steps below apply too, and `status` warns. |
+| Claude Keychain item, fallback | (1) **Renewal guard:** if `claude` processes are running *and* the live access token is within 10 min of `expiresAt` or past it, those sessions may renew at any moment. The switch then asks for confirmation ("a running session may renew this login now; switching could strand the new token — continue?"), and `next`/`switch` refuse unless `--force`. With no running sessions there's no race, so no guard. (2) Re-read right before writing; any change restarts the switch. (3) Read back after writing; a mismatch opens a rescue. |
 | running CLIs writing an old account back | `expected-<kind>.json` holds `cred_hash`. Picker and `status` compare it with the live store (the badge doesn't read the Keychain). A mismatch that matches another profile's generation opens a rescue; any other mismatch counts as normal rotation. |
 
 ## 9. Other components
@@ -348,6 +367,9 @@ auto-commits or auto-restores a value the plugin didn't write.
 | `security -i` + `add-generic-password -U -s … -a … -X <hex>` on stdin: exact round-trip (quotes, unicode), updates existing items, prints nothing, non-zero exit on error | reproduced with a dummy item |
 | urllib forwards all headers but content-* (incl. `Authorization`) on 301/302/303/307/308 GET redirects, any host | CPython 3.14 `HTTPRedirectHandler.redirect_request` |
 | Claude Code 2.1.309 Keychain service and account naming as in §3 | Claude 2.1.309 binary (keychain-naming function) |
+| Claude 2.1.309 lock files and stale periods as in §3; refresh re-reads the store after locking; global config is `.config.json` when present | Claude 2.1.309 binary (lock and refresh functions) |
+| `trustedDeviceToken` is enrolled with the account's credentials and cleared for non-subscribers | Claude 2.1.309 binary (trusted-device functions) |
+| Codex 0.163.0 writes `auth.json` in place (`truncate`, `write_all`), with no lock; no `json.lock` in the binary | `openai/codex` @ `rust-v0.163.0` `login/src/auth/storage.rs`; installed binary |
 | Keychain blob keys: `claudeAiOauth{accessToken, refreshToken, expiresAt(ms), refreshTokenExpiresAt, scopes, subscriptionType, subscriptionTypeSource, rateLimitTier}`, `trustedDeviceToken` | live item, structure only |
 | `oauthAccount` includes `accountUuid`, `organizationUuid`; Claude merges profile fetches into it; writes config via temp file + rename, refusing symlinks, preserving mode | live file (keys only), 2.1.309 binary |
 | Claude tracks `lastCredentialsMtimeMs` and caches Keychain reads for 30 s | 2.1.309 binary |
@@ -360,12 +382,12 @@ auto-commits or auto-restores a value the plugin didn't write.
 
 | id | question | phase |
 |----|----------|-------|
-| V1 | Does Claude lock `~/.claude.json` (proper-lockfile `.lock` dir)? If so, take the same lock. | 4 |
-| V2 | Is `trustedDeviceToken` account- or device-scoped? Default until known: account-scoped. | 4 |
-| V3 | Does installed Codex 0.163.0 take `auth.json.lock` / compare-and-save? | 4 |
+| V1 | ~~Does Claude lock `~/.claude.json`?~~ **Yes**, plus a refresh lock and a storage-write lock (§3). | 4 ✔ |
+| V2 | ~~`trustedDeviceToken` scope?~~ **Account-scoped** (§3). | 4 ✔ |
+| V3 | ~~Codex 0.163.0 lock?~~ **No.** It writes in place, without a lock (§3). | 4 ✔ |
 | V4 | Does a running Codex follow an `auth.json` swap, and does it write back after refresh? | 6 |
 | V5 | Does a running Claude 2.1.309 follow a Keychain swap (`.credentials.json` absent here)? Isolated `CLAUDE_CONFIG_DIR`, dummy refresh tokens. | 6 |
-| V6 | Working directory for herdr commands; state-dir path when run outside herdr (tab bar). | 7 |
+| V6 | ~~herdr working directory and state dir?~~ The working directory is the plugin root; state is `~/.local/state/herdr/plugins/<id>` (0755, which we tighten), and config is `~/.config/herdr/plugins/config/<id>`. | 7 ✔ |
 | V7 | Do the usage endpoints accept an honest User-Agent? If not, that provider has no usage, and we don't spoof. | 9 |
 | V8 | Linux paths/behaviour: CI only, as there is no Linux machine here. | 4/10 |
 
