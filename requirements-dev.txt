@@ -1,0 +1,7 @@
+# Development and CI only. The plugin itself has no runtime dependencies.
+# TODO(lockfile): replace with a hash-pinned lock (uv pip compile --generate-hashes)
+# once files.pythonhosted.org is reachable from the dev machine.
+pytest==9.2.0
+hypothesis==6.170.14
+ruff==0.17.3
+mypy==2.4.1

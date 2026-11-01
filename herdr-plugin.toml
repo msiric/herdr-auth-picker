@@ -1,0 +1,16 @@
+id = "msiric.auth-picker"
+name = "Auth Picker"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Switch Claude Code and Codex logins in herdr, without losing them."
+platforms = ["macos", "linux"]
+
+# Every command runs as `python3 -I main.py ...`. Isolated mode ignores
+# PYTHONPATH, PYTHONSTARTUP and user site-packages, so nothing in the
+# environment can shadow this plugin's modules or the standard library.
+
+[[actions]]
+id = "status"
+title = "Auth Picker: status"
+contexts = ["global"]
+command = ["python3", "-I", "main.py", "status"]
