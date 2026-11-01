@@ -153,7 +153,8 @@ CLAUDE_OK = {
 @pytest.fixture
 def snapshot(tmp_path: Path) -> Snapshot:
     backend = make_backends(tmp_path)["claude"]
-    return backend.parse_secret(Sensitive(claude_secret("alice")))
+    parsed: Snapshot = backend.parse_secret(Sensitive(claude_secret("alice")))
+    return parsed
 
 
 def _usage(tmp_path: Path, provider: Provider, clock: list[float]) -> Usage:
