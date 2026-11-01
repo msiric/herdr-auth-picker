@@ -114,12 +114,16 @@ available only this way.
 ### The badge
 
 To show the account on each agent row in herdr's sidebar, add the `$acct`
-token. The plugin never edits your herdr config.
+token. The plugin never edits your herdr config. The second row, beside the
+agent's name, has room for it; at the end of the first row it gets cut off.
 
 ```toml
 [ui.sidebar.agents]
-rows = [["state_icon", "workspace", "tab", "$acct"], ["agent"]]
+rows = [["state_icon", "workspace", "tab"], ["agent", "$acct"]]
 ```
+
+Short profile names read best there (`bin/auth-picker rename claude
+mario.example work`), and `badge_format = "{label}"` drops the glyph.
 
 Or show it once, in the tab bar. Use the directory `herdr plugin list` reports:
 
