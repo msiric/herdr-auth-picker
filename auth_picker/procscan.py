@@ -30,7 +30,8 @@ class Sessions:
 
 def kind_of(argv0: str, args: str) -> str | None:
     name = os.path.basename(argv0)
-    if name == "claude" or "/claude/versions/" in argv0 or "@anthropic-ai/claude-code" in args:
+    npm_install = name in ("node", "bun") and "@anthropic-ai/claude-code" in args
+    if name == "claude" or "/claude/versions/" in argv0 or npm_install:
         return "claude"
     if name == "codex":
         return "codex"

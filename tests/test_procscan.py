@@ -16,6 +16,7 @@ from auth_picker.procscan import kind_of
         ("/Applications/Claude.app/Contents/MacOS/Claude", "", None),
         ("/opt/homebrew/bin/codex-code-mode-host", "", None),
         ("/usr/bin/python3", "python3 claude.py", None),
+        ("/usr/bin/grep", "grep @anthropic-ai/claude-code notes.txt", None),
     ],
 )
 def test_which_processes_count_as_sessions(argv0: str, args: str, kind: str | None) -> None:
