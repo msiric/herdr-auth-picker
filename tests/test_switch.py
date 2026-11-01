@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 import auth_picker.backends.claude as claude_module
+import auth_picker.fsutil
 from auth_picker import procscan
 from auth_picker.backends.base import Snapshot
 from auth_picker.backends.claude import ClaudeBackend
@@ -143,7 +144,7 @@ def test_a_renewal_before_the_write_restarts_and_keeps_the_newest_token(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real = ClaudeBackend.install
-    calls = []
+    calls: list[int] = []
 
     def renew_then_install(self: ClaudeBackend, *args: Any) -> None:
         if not calls:  # Claude renews alice's token right before our first write
@@ -163,8 +164,8 @@ def test_a_renewal_before_the_write_restarts_and_keeps_the_newest_token(
 def test_a_failure_halfway_puts_the_previous_login_back(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    real = claude_module.write_foreign
-    failed = []
+    real = auth_picker.fsutil.write_foreign
+    failed: list[str] = []
 
     def fail_identity_once(path: str, *args: Any, **kwargs: Any) -> Any:
         if path.endswith(".claude.json") and not failed:
