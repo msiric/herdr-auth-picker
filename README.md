@@ -4,7 +4,7 @@ Switch which Claude Code or Codex account is logged in, from inside
 [herdr](https://herdr.dev), without logging out and back in, and without
 losing a login along the way.
 
-> **Status: 1.0.0.** Verified end to end with real Claude and Codex accounts,
+> **Status: 1.1.0.** Verified end to end with real Claude and Codex accounts,
 > including running sessions, and independently reviewed. Results:
 > [`docs/e2e-checklist.md`](docs/e2e-checklist.md).
 
@@ -46,17 +46,13 @@ in [`docs/threat-model.md`](docs/threat-model.md).
 
 ## Install
 
-From a local checkout (this repository is private, so this is the usual way):
+From GitHub, pinned to a release (read the code first: it handles your logins):
 
 ```sh
-herdr plugin link ~/Documents/herdr-auth-picker
+herdr plugin install msiric/herdr-auth-picker --ref v1.1.0
 ```
 
-From GitHub, pinned to a commit you have reviewed:
-
-```sh
-herdr plugin install msiric/herdr-auth-picker --ref <commit-sha>
-```
+Or from a local checkout: `herdr plugin link /path/to/herdr-auth-picker`.
 
 Then save the logins you have:
 
@@ -226,3 +222,7 @@ python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements-
 
 Keychain tests use a throwaway keychain file, never your login keychain.
 Usage tests run against a local HTTPS server.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
