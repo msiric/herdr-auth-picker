@@ -4,7 +4,7 @@ Switch which Claude Code or Codex account is logged in, from inside
 [herdr](https://herdr.dev), without logging out and back in, and without
 losing a login along the way.
 
-> **Status: 1.1.0.** Verified end to end with real Claude and Codex accounts,
+> **Status: 1.2.0.** Verified end to end with real Claude and Codex accounts,
 > including running sessions, and independently reviewed. Results:
 > [`docs/e2e-checklist.md`](docs/e2e-checklist.md).
 
@@ -49,7 +49,7 @@ in [`docs/threat-model.md`](docs/threat-model.md).
 From GitHub, pinned to a release (read the code first: it handles your logins):
 
 ```sh
-herdr plugin install msiric/herdr-auth-picker --ref v1.1.0
+herdr plugin install msiric/herdr-auth-picker --ref v1.2.0
 ```
 
 Or from a local checkout: `herdr plugin link /path/to/herdr-auth-picker`.
@@ -112,22 +112,25 @@ available only this way.
 The plugin puts two tokens on every Claude and Codex pane: `$acct` (the
 account) and `$usage` (how much of it is used, when usage is on). herdr shows
 a token only where a sidebar row names it. The plugin never edits your herdr
-config, so add them yourself. Each on its own row, for Claude and Codex panes
-only, so they're never cut off and other agents keep their usual layout:
+config, so add them yourself. Beside the agent's name, for Claude and Codex
+panes only, so other agents keep their usual layout:
 
 ```toml
 [ui.sidebar.agents.rows_by_agent]
-claude = [["state_icon", "workspace", "tab"], ["agent", "$usage"], ["$acct"]]
-codex = [["state_icon", "workspace", "tab"], ["agent", "$usage"], ["$acct"]]
+claude = [["state_icon", "workspace", "tab"], ["agent", "$acct", "$usage"]]
+codex = [["state_icon", "workspace", "tab"], ["agent", "$acct", "$usage"]]
 ```
 
-Then `herdr server reload-config`. A pane looks like this:
+and, in the plugin's `config.toml`, `badge_format = "{label}"` to drop the
+glyph. Then `herdr server reload-config`. herdr puts a `·` between tokens:
 
 ```
 ● Documents · Real estate
-claude  42% 5h ↺2h10
-👤 work
+claude · work · 42% 5h ↺2h10
 ```
+
+With long profile names, or a narrow sidebar, give each token its own row
+instead (`[["agent", "$usage"], ["$acct"]]`) or raise `ui.sidebar_width`.
 
 `42% 5h ↺2h10` means 42% of the five-hour window used, resetting in 2h10;
 `~` marks a reading older than twice `ttl_s`. `wk` and `mo` are the weekly and
