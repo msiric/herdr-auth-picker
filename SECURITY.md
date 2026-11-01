@@ -1,0 +1,49 @@
+# Security
+
+## Reporting
+
+This repository is private. Report problems to its owner directly, not in an
+issue. Include the auth-picker version, the Claude Code and Codex versions, and
+the output of `status`. Never include tokens or credential files: `status`
+prints none, and that is deliberate.
+
+## What it protects, and from what
+
+[`docs/threat-model.md`](docs/threat-model.md) lists the assets, trust
+boundaries and threats. [`docs/design.md`](docs/design.md) lists the invariants
+(I1–I7) that answer them, with the tests that hold each one.
+
+Briefly:
+
+- **I1** The newest copy of a login is never destroyed.
+- **I2** No refresh token is ever sent anywhere. The source contains no token
+  endpoint or OAuth client id; a test fails if one appears.
+- **I3** Secrets stay in the secret stores: never in argv, a child's
+  environment, logs, stdout/stderr, notifications or exception messages.
+- **I4** Files it doesn't own are patched by key, only after a full parse,
+  and only if unchanged since read.
+- **I5** A switch completes, rolls back exactly, or stops in a rescue that
+  keeps every generation it saw.
+- **I6** A saved login is updated from the live one only with evidence
+  (locks, a consistent read, matching identity, a contamination check).
+- **I7** Network use is opt-in, HTTPS to two fixed hosts, GET only, with no
+  redirects or proxies, and only the live account's unexpired access token.
+
+## Out of scope
+
+- Malware running as your user, and root. They can read the login keychain
+  through `security` and every file this tool can. Nothing a plugin does
+  changes that.
+- What the CLIs do with tokens they already hold in memory.
+
+## Supply chain
+
+- No runtime dependencies: Python's standard library only.
+- herdr runs every command as `python3 -I`, and the entry point re-runs itself
+  isolated if started without it, so `PYTHONPATH` and user site-packages can't
+  substitute code.
+- Install pinned to a commit you have read: `herdr plugin install
+  msiric/herdr-auth-picker --ref <sha>`.
+- CI pins its GitHub Actions to commit SHAs and runs lint, `mypy --strict` and
+  the tests on macOS and Linux for every change. Development tools are pinned by
+  version; a hash-pinned lock file is still to do.

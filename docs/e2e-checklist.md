@@ -1,0 +1,75 @@
+# End-to-end checklist (real accounts)
+
+Unit and integration tests cover the logic against fake homes and throwaway
+keychains. These steps cover what only real CLIs can show. Run them in order.
+Each says what it touches. Nothing here contacts a provider except step 7,
+and only with your go-ahead.
+
+Before you start: note which account each CLI is on (`status`). Every switch
+keeps the previous login for `undo`, and nothing here deletes a login.
+
+Run commands from the plugin directory as `python3 -I main.py <command>`.
+
+## 1. Read-only baseline
+
+- `status`: both CLIs show their live account as `unsaved`.
+- The picker (`open` action): both kinds listed. Quit with `q`.
+
+Touches: nothing. Status reads the Claude Keychain item and `auth.json`.
+
+## 2. Save the current logins
+
+- `save`
+- `status`: both live accounts are now saved and marked `●`.
+- `security find-generic-password -s msiric.auth-picker -a profile:<id>`
+  finds each item. Look for the item; don't print the password.
+
+Touches: creates two Keychain items and the profile index.
+
+## 3. A second Claude account
+
+- In a Claude pane: `/login` with the other account. `save claude`.
+- `status`: two Claude profiles; the new one live.
+
+Touches: your Claude login (via Claude itself).
+
+## 4. Switch Claude with no session running (V5, part 1)
+
+- Quit every `claude` session. Action `next`.
+- `claude auth status --json` in a new pane shows the other account;
+  `status` agrees; the badge changes.
+- `undo`, then check the same way.
+
+Touches: the Claude Keychain item and `oauthAccount` in `~/.claude.json`.
+`~/.claude.json` keeps everything else: compare `projects` before and after.
+
+## 5. Switch Claude with a session running (V5, part 2)
+
+- Start `claude` in a pane, ask it something. Action `next`.
+- In the same session, ask again, then `/status`: which account answered?
+- Record the result in docs/design.md §11 (V5).
+
+## 6. Codex (V4)
+
+- If you have a second Codex account: `codex login` with it, `save codex`.
+- Same as steps 4 and 5 with `codex`. Note whether a running `codex` follows
+  the switch, and whether the old account is written back afterwards (`status`
+  would say "logged in outside auth-picker").
+
+## 7. Usage (V7): asks for your go-ahead first
+
+- This sends the live account's access token to the provider's usage endpoint
+  with an honest `msiric-auth-picker` User-Agent: the terms-of-service grey
+  zone in the README.
+- If you agree: set `[usage] enabled = true`, run `usage`, and record whether
+  each provider answered or refused.
+
+## 8. Recovery drill (optional)
+
+- `mkdir ~/.claude/.oauth_refresh.lock`, action `next`: refused with "Claude
+  Code is refreshing", nothing changed. `rmdir` it afterwards.
+
+## Sign-off
+
+When 1–6 pass (7 optional), record the results in docs/design.md §11, update
+the README status, and tag `v1.0.0`.
