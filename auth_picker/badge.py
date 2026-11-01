@@ -6,9 +6,10 @@ writes, and no Keychain read: Claude's identity comes from its config file.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 
-from auth_picker import herdr
+from auth_picker import herdr, usage
 from auth_picker.app import App
 
 SHORT = {"claude": "Claude", "codex": "Codex"}
@@ -33,8 +34,20 @@ def label_for(app: App, kind: str) -> str | None:
     return ("!" if app.journals.rescues(kind) else "") + label
 
 
-def render(fmt: str, glyph: str, label: str, kind: str) -> str:
-    return fmt.replace("{glyph}", glyph).replace("{label}", label).replace("{kind}", SHORT[kind])
+def render(fmt: str, glyph: str, label: str, kind: str, used: str = "") -> str:
+    text = fmt.replace("{glyph}", glyph).replace("{label}", label).replace("{kind}", SHORT[kind])
+    return text.replace("{usage}", used).strip()
+
+
+def used_for(app: App, kind: str) -> str:
+    """The cached usage summary for the live account. No network, ever."""
+    if app.usage is None:
+        return ""
+    identity = app.backends[kind].live_identity()
+    if identity is None:
+        return ""
+    reading = app.usage.cached().get(identity.fingerprint(kind))
+    return usage.summary(reading, time.time(), app.config.usage.ttl_s).split(",")[0]
 
 
 def line(app: App, kinds: Sequence[str]) -> str:
@@ -42,7 +55,7 @@ def line(app: App, kinds: Sequence[str]) -> str:
     prefix = len(shown) > 1 and "{kind}" not in app.config.badge_format
     return " · ".join(
         (f"{SHORT[kind]} " if prefix else "")
-        + render(app.config.badge_format, app.config.glyph, label, kind)
+        + render(app.config.badge_format, app.config.glyph, label, kind, used_for(app, kind))
         for kind, label in shown
     )
 

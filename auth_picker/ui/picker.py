@@ -9,11 +9,12 @@ touches the credential store.
 from __future__ import annotations
 
 import contextlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from auth_picker import badge
+from auth_picker import badge, usage
 from auth_picker.app import App
 from auth_picker.backends import KINDS
 from auth_picker.backends.base import Unsupported
@@ -48,8 +49,31 @@ class Picker:
         self.confirm = confirm
         self.cursor = 0
         self.message = ""
+        self.usage_read_at = 0.0
 
     # -- model -------------------------------------------------------------
+
+    def refresh_usage(self, force: bool = False) -> None:
+        """Read the live accounts' usage, at most once per TTL (opt-in)."""
+        reader = self.app.usage
+        now = time.time()
+        if reader is None or (not force and now - self.usage_read_at < reader.ttl_s):
+            return
+        self.usage_read_at = now
+        for kind in KINDS:
+            if not self.app.profiles.of_kind(kind):
+                continue
+            with contextlib.suppress(AuthPickerError):
+                live = self.app.backends[kind].read_live()
+                if live is not None:
+                    reader.refresh(live)
+
+    def _usage_text(self, fingerprint: str) -> str:
+        if self.app.usage is None:
+            return ""
+        reading = self.app.usage.cached().get(fingerprint)
+        text = usage.summary(reading, time.time(), self.app.config.usage.ttl_s)
+        return f"  · {text}" if text else ""
 
     def rows(self) -> list[Row]:
         rows: list[Row] = []
@@ -72,7 +96,12 @@ class Picker:
                 state += " · ! needs attention, run status"
             rows.append(Row(kind, f"{TITLES[kind]} — {state}"))
             rows.extend(
-                Row(kind, f"{p.label}  {p.identity.describe()}", p, p.fingerprint == live_print)
+                Row(
+                    kind,
+                    f"{p.label}  {p.identity.describe()}{self._usage_text(p.fingerprint)}",
+                    p,
+                    p.fingerprint == live_print,
+                )
                 for p in saved
             )
         return rows
@@ -276,6 +305,7 @@ def run(app: App) -> int:
 
         picker = Picker(app, prompt, confirm)
         while True:
+            picker.refresh_usage()
             draw(stdscr, picker, picker.rows(), attrs)
             try:
                 code = stdscr.getch()

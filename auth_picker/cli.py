@@ -9,6 +9,7 @@ nobody reads those logs as it happens.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 import time
 import traceback
@@ -221,6 +222,32 @@ def _cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_usage(args: argparse.Namespace) -> int:
+    from auth_picker.usage import summary  # noqa: PLC0415
+
+    app = _app(args)
+    if app.usage is None:
+        out("usage is off; set `[usage] enabled = true` in the plugin's config.toml")
+        out("it reads the logged-in account's usage from the provider, never renews a token,")
+        out("and shows other accounts' last reading from when they were logged in")
+        return 1
+    now = time.time()
+    for kind in [args.kind] if args.kind else list(KINDS):
+        live = None
+        with contextlib.suppress(AuthPickerError):
+            live = app.backends[kind].read_live()
+        if live is not None:
+            reading = app.usage.refresh(live)
+            if reading.error:
+                out(f"{kind}: {reading.error}")
+        cached = app.usage.cached()
+        for profile in app.profiles.of_kind(kind):
+            text = summary(cached.get(profile.fingerprint), now, app.config.usage.ttl_s)
+            mark = "●" if live and live.fingerprint == profile.fingerprint else " "
+            out(f"{mark} {kind:<6} {profile.label:<20} {text or 'never read'}")
+    return 0
+
+
 def _cmd_stamp(args: argparse.Namespace) -> int:
     badge.stamp(_app(args))
     return 0
@@ -359,6 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--yes", action="store_true")
     add("recover", _cmd_recover, "finish or undo an interrupted switch (startup hook)")
     add("stamp", _cmd_stamp, "refresh the account badge on agent panes")
+    sub = add("usage", _cmd_usage, "how much of each account's allowance is used (opt-in)")
+    kind(sub)
     sub = add("badge", _cmd_badge, "print the account badge (for a tab bar)")
     sub.add_argument("kinds", nargs="*", metavar="KIND", help="claude and/or codex (default: both)")
     sub = add(

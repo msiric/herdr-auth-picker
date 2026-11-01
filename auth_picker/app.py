@@ -12,6 +12,7 @@ from auth_picker.journal import JournalStore
 from auth_picker.profiles import Profiles
 from auth_picker.secretstore import SecretStore, default_store
 from auth_picker.switch import Switcher
+from auth_picker.usage import Usage
 
 
 @dataclass
@@ -22,6 +23,7 @@ class App:
     profiles: Profiles
     journals: JournalStore
     switcher: Switcher
+    usage: Usage | None = None
     config_error: str | None = None
 
     @classmethod
@@ -40,4 +42,5 @@ class App:
         profiles = Profiles(state, store, backends, settings.lock_timeout_s)
         journals = JournalStore(state, store)
         switcher = Switcher(profiles, journals, lock_timeout=settings.lock_timeout_s)
-        return cls(settings, store, backends, profiles, journals, switcher, error)
+        usage = Usage(state, settings.usage.ttl_s) if settings.usage.enabled else None
+        return cls(settings, store, backends, profiles, journals, switcher, usage, error)

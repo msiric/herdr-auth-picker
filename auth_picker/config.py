@@ -20,7 +20,7 @@ from auth_picker.errors import ConfigError, UnsafePath
 from auth_picker.fsutil import read_foreign
 
 MAX_CONFIG_BYTES = 64 * 1024
-BADGE_FIELDS = frozenset({"glyph", "label", "kind"})
+BADGE_FIELDS = frozenset({"glyph", "label", "kind", "usage"})
 _FIELD = re.compile(r"\{([^{}]*)\}")
 
 
