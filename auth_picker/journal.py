@@ -51,6 +51,9 @@ class Rescue:
     reason: str
     created_at: float
     kept: list[dict[str, Any]]  # [{"key", "what", "describe", "fingerprint"}]
+    # "interrupted" (a switch stopped part-way) or "contaminated" (one account's
+    # tokens under another's identity: never to be adopted into a profile).
+    cause: str = "interrupted"
 
 
 class JournalStore:
@@ -89,7 +92,11 @@ class JournalStore:
     # -- rescues -----------------------------------------------------------
 
     def open_rescue(
-        self, kind: str, reason: str, kept: list[tuple[str, Sensitive, str, str | None]]
+        self,
+        kind: str,
+        reason: str,
+        kept: list[tuple[str, Sensitive, str, str | None]],
+        cause: str = "interrupted",
     ) -> Rescue:
         """Keep every given generation (what, secret, describe, fingerprint) and record why."""
         rid = uuid.uuid4().hex[:12]
@@ -100,7 +107,7 @@ class JournalStore:
             entries.append(
                 {"key": key, "what": what, "describe": describe, "fingerprint": fingerprint}
             )
-        rescue = Rescue(rid, kind, reason, time.time(), entries)
+        rescue = Rescue(rid, kind, reason, time.time(), entries, cause)
         secure_dir(self.rescue_dir)
         write_private(
             os.path.join(self.rescue_dir, f"{rid}.json"), json.dumps(asdict(rescue)).encode()

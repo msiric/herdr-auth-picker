@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import platform
 import subprocess
@@ -221,3 +222,68 @@ def test_only_this_installs_keys_are_adopted_from_the_old_shared_service(tmp_pat
     assert adopt_legacy(store, legacy, ["profile:mine", "undo:claude"]) == ["profile:mine"]
     assert store.get("profile:mine") == Sensitive(b"mine")
     assert legacy.keys() == ["profile:someone-elses"]
+
+
+def test_two_processes_creating_the_install_id_agree(tmp_path: Path) -> None:
+    from auth_picker.fsutil import create_private  # noqa: PLC0415
+    from auth_picker.secretstore import install_id  # noqa: PLC0415
+
+    state = tmp_path / "state"
+    assert create_private(str(state / "install-id"), b"0123456789abcdef")  # the other one won
+    assert not create_private(str(state / "install-id"), b"fedcba9876543210")
+    assert install_id(str(state)) == "0123456789abcdef"
+
+
+@on_macos
+def test_upgrading_from_rc1_moves_journals_and_rescues_too(
+    keychain: KeychainStore, tmp_path: Path
+) -> None:
+    from auth_picker.app import _adopt_legacy  # noqa: PLC0415
+    from auth_picker.journal import JournalStore  # noqa: PLC0415
+    from auth_picker.profiles import Profiles  # noqa: PLC0415
+    from auth_picker.switch import store_tag  # noqa: PLC0415
+    from tests.fakes import make_backends  # noqa: PLC0415
+
+    state = tmp_path / "state"
+    new = KeychainStore(keychain.service + "-new", keychain=keychain.keychain)
+    backends = make_backends(tmp_path)
+    profiles = Profiles(str(state), new, backends)
+    journals = JournalStore(str(state), new)
+    keychain.put("tx:abc:pre", Sensitive(b"pre-image"))
+    keychain.put("rescue:r1:0", Sensitive(b"kept"))
+    (state / "tx").mkdir(parents=True)
+    (state / "tx" / "claude.json").write_text(
+        json.dumps(
+            {
+                "txid": "abc",
+                "kind": "claude",
+                "phase": "installing",
+                "target_label": "B",
+                "target_fingerprint": "f",
+                "target_components": {},
+                "pre_fingerprint": "p",
+            }
+        )
+    )
+    (state / "rescue").mkdir()
+    (state / "rescue" / "r1.json").write_text(
+        json.dumps(
+            {
+                "rid": "r1",
+                "kind": "claude",
+                "reason": "x",
+                "created_at": 0,
+                "kept": [{"key": "rescue:r1:0", "what": "w", "describe": "", "fingerprint": None}],
+            }
+        )
+    )
+
+    _adopt_legacy(str(state), new, profiles, journals, backends, legacy=keychain)
+
+    assert new.get("tx:abc:pre") == Sensitive(b"pre-image")
+    assert new.get("rescue:r1:0") == Sensitive(b"kept")
+    assert keychain.keys() == []
+    moved = journals.current(store_tag(backends["claude"]))
+    assert moved is not None
+    assert moved.txid == "abc"
+    assert not (state / "tx" / "claude.json").exists()

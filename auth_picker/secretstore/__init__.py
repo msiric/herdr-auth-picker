@@ -13,7 +13,7 @@ import platform
 import re
 import uuid
 
-from auth_picker.fsutil import read_private, secure_dir, write_private
+from auth_picker.fsutil import create_private, read_private
 from auth_picker.secretstore.base import SERVICE, SecretStore, check_key
 from auth_picker.secretstore.filestore import FileStore
 from auth_picker.secretstore.keychain import KeychainStore
@@ -26,27 +26,40 @@ __all__ = [
     "adopt_legacy",
     "check_key",
     "default_store",
+    "existing_install_id",
     "install_id",
 ]
 
 _ID = re.compile(r"[0-9a-f]{16}")
 
 
+def existing_install_id(state_dir: str) -> str | None:
+    data = read_private(os.path.join(state_dir, "install-id"), 64)
+    text = data.decode("ascii", "replace").strip() if data is not None else ""
+    return text if _ID.fullmatch(text) else None
+
+
 def install_id(state_dir: str) -> str:
-    """A random id for this state directory, made once and kept."""
-    path = os.path.join(state_dir, "install-id")
-    data = read_private(path, 64)
-    if data is not None and _ID.fullmatch(data.decode("ascii", "replace").strip()):
-        return data.decode().strip()
-    secure_dir(state_dir)
-    new = uuid.uuid4().hex[:16]
-    write_private(path, new.encode())
-    return new
+    """A random id for this state directory, made once and kept.
+
+    Two processes starting at once must agree: the file is only ever created
+    if absent, and whoever loses reads the winner's id.
+    """
+    found = existing_install_id(state_dir)
+    if found is not None:
+        return found
+    create_private(os.path.join(state_dir, "install-id"), uuid.uuid4().hex[:16].encode())
+    found = existing_install_id(state_dir)
+    if found is None:
+        raise ValueError(f"{state_dir}/install-id is damaged; move it aside")
+    return found
 
 
-def default_store(state_dir: str) -> SecretStore:
+def default_store(state_dir: str, *, create: bool = True) -> SecretStore:
+    """The store for this state dir. ``create=False`` never writes (for the badge)."""
     if platform.system() == "Darwin":
-        return KeychainStore(f"{SERVICE}.{install_id(state_dir)}")
+        ident = install_id(state_dir) if create else existing_install_id(state_dir)
+        return KeychainStore(f"{SERVICE}.{ident or 'unset'}")
     return FileStore(os.path.join(state_dir, "secrets"))
 
 

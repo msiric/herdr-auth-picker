@@ -185,21 +185,11 @@ def _cmd_revert(args: argparse.Namespace) -> int:
 
 
 def _adopt(app: App, rid: str, item: int, name: str | None) -> int:
-    match = [r for r in app.journals.rescues() if r.rid == rid]
-    if not match or not 0 <= item < len(match[0].kept):
-        raise AuthPickerError("missing", f"no rescue {rid} with item {item}")
-    rescue, entry = match[0], match[0].kept[item]
-    secret = app.store.get(entry["key"])
-    if secret is None:
-        raise AuthPickerError("missing", "that kept login is gone")
-    snapshot = app.backends[rescue.kind].parse_secret(secret)
-    saved = app.profiles.by_fingerprint(rescue.kind, snapshot.fingerprint)
-    if saved is not None:
-        app.profiles.update_secret(saved, snapshot)
-        out(f"{saved.label} now holds the kept login (its previous one is kept; see `revert`)")
+    profile, new = app.switcher.adopt(rid, item, name)
+    if new:
+        out(f"saved the kept login as {profile.label}")
     else:
-        label = name or f"rescued {snapshot.identity.email or snapshot.identity.account_id[:8]}"
-        out(f"saved the kept login as {app.profiles.create(label[:40], snapshot).label}")
+        out(f"{profile.label} now holds the kept login (its previous one is kept; see `revert`)")
     return 0
 
 
@@ -215,7 +205,8 @@ def _cmd_rescue(args: argparse.Namespace) -> int:
             out(f"{rescue.rid}  {rescue.kind}: {rescue.reason} ({_ago(rescue.created_at)})")
             for n, entry in enumerate(rescue.kept):
                 out(f"    [{n}] kept: {entry['what']} {entry['describe']}".rstrip())
-            out(f"    keep one as a profile: rescue --adopt {rescue.rid} --item N")
+            if rescue.cause != "contaminated":
+                out(f"    keep one as a profile: rescue --adopt {rescue.rid} --item N")
         return 0
     match = [r for r in rescues if r.rid == args.clear]
     if not match:
@@ -269,7 +260,7 @@ def _cmd_badge(args: argparse.Namespace) -> int:
     unknown = sorted(set(args.kinds) - set(KINDS))
     if unknown:
         raise AuthPickerError("which-kind", f"unknown kind {unknown[0]!r}: use claude or codex")
-    app = _app(args)
+    app = App.load(args.config, readonly=True)
     text = badge.line(app, args.kinds or list(KINDS))
     if text:
         out(text)

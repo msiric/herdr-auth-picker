@@ -179,3 +179,31 @@ def test_a_kept_login_can_be_adopted_from_a_rescue(
     assert "--adopt" in run(capsys, "rescue")[1]
     assert run(capsys, "rescue", "--adopt", rid, "--item", "1")[0] == 0
     assert world.profiles.find("claude", "rescued carol@example.com")
+
+
+def test_a_rescue_holding_mixed_up_tokens_cannot_be_adopted(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    world.log_in("alice")
+    world.save("A", "alice")
+    world.save("B", "bob")
+    creds = world.home / ".claude" / ".credentials.json"
+    bob = json.loads(world.profiles.store.get(world.profiles.find("claude", "B").key).reveal())  # type: ignore[union-attr]
+    blob = json.loads(creds.read_text())
+    blob["claudeAiOauth"] = bob["credentials"]["claudeAiOauth"]
+    creds.write_text(json.dumps(blob))
+    assert run(capsys, "switch", "claude", "B")[0] == 1  # opens a contamination rescue
+    rid = world.journals.rescues()[0].rid
+    listing = run(capsys, "rescue")[1]
+    assert "--adopt" not in listing
+    code, text = run(capsys, "rescue", "--adopt", rid)
+    assert code == 1
+    assert "cannot be saved as a profile" in text
+    assert b"refresh-1" in world.profiles.secret(world.profiles.find("claude", "A"))[0].reveal()
+
+
+def test_the_badge_creates_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HERDR_PLUGIN_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("HERDR_PLUGIN_CONFIG_DIR", str(tmp_path / "config"))
+    App.load(readonly=True)
+    assert not (tmp_path / "state").exists()

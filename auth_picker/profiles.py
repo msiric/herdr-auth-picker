@@ -69,6 +69,10 @@ class Profile:
     def prev_key(self) -> str:
         return f"profile:{self.id}:prev"
 
+    @property
+    def swap_key(self) -> str:
+        return f"profile:{self.id}:swap"
+
     def holds(self, cred_hash: str | None = None, refresh_hash: str | None = None) -> bool:
         """True if either generation of this profile is the one described."""
         return bool(
@@ -294,29 +298,47 @@ class Profiles:
             return updated
 
     def revert(self, profile: Profile) -> Profile:
-        """Swap a profile's saved login with the generation before it."""
+        """Swap a profile's saved login with the generation before it.
+
+        Three copies make it safe: the current login goes to ``:swap`` first,
+        then the main slot gets the previous login, then ``:prev`` the current
+        one, then the index, then ``:swap`` is removed. The index changes last,
+        so after a crash both logins are still found by the hashes it lists,
+        and running revert again finishes the job.
+        """
         with self.locked():
             current = self.get(profile.id)
-            now_secret = self.store.get(current.key)
-            prev_secret = self.store.get(current.prev_key)
-            if prev_secret is None or now_secret is None:
+            if current.prev_cred_hash is None:
                 raise ProfileError("no-previous", f"{current.label} has no earlier login saved")
-            previous = self.backends[current.kind].parse_secret(prev_secret)
-            if previous.fingerprint != current.fingerprint:
+            if self.store.get(current.swap_key) is None:
+                now = self.store.get(current.key)
+                if now is not None:
+                    self.store.put(current.swap_key, now)
+            found: dict[str, tuple[Sensitive, Snapshot]] = {}
+            for key in (current.key, current.prev_key, current.swap_key):
+                secret = self.store.get(key)
+                if secret is not None:
+                    snapshot = self.backends[current.kind].parse_secret(secret)
+                    found.setdefault(snapshot.cred_hash, (secret, snapshot))
+            older, newer = found.get(current.prev_cred_hash), found.get(current.cred_hash)
+            if older is None or newer is None:
+                raise ProfileError("no-previous", f"{current.label}'s earlier login is missing")
+            if older[1].fingerprint != current.fingerprint:
                 raise ProfileError("identity", f"the earlier login is not {current.label}'s")
-            self.store.put(current.prev_key, now_secret)
-            self.store.put(current.key, prev_secret)
+            self.store.put(current.key, older[0])
+            self.store.put(current.prev_key, newer[0])
             updated = replace(
                 current,
-                identity=previous.identity,
+                identity=older[1].identity,
                 updated_at=self.clock(),
-                refresh_expires_at=previous.refresh_expires_at,
-                cred_hash=previous.cred_hash,
-                refresh_hash=previous.refresh_hash,
+                refresh_expires_at=older[1].refresh_expires_at,
+                cred_hash=older[1].cred_hash,
+                refresh_hash=older[1].refresh_hash,
                 prev_cred_hash=current.cred_hash,
                 prev_refresh_hash=current.refresh_hash,
             )
             self._replace(updated)
+            self.store.delete(current.swap_key)
             return updated
 
     def rename(self, profile: Profile, label: str) -> Profile:
@@ -336,11 +358,11 @@ class Profiles:
         with self.locked():
             current = self.get(profile.id)
             self._write([p for p in self.all() if p.id != current.id])
-            self.store.delete(current.key)
-            self.store.delete(current.prev_key)
+            for key in (current.key, current.prev_key, current.swap_key):
+                self.store.delete(key)
 
     def orphans(self) -> list[str]:
         """Profile secrets no index entry refers to (left by a crash)."""
-        referenced = {k for p in self.all() for k in (p.key, p.prev_key)}
+        referenced = {k for p in self.all() for k in (p.key, p.prev_key, p.swap_key)}
         stored = self.store.keys()
         return [k for k in stored if k.startswith("profile:") and k not in referenced]

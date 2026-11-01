@@ -113,3 +113,29 @@ def test_a_crash_before_the_index_write_leaves_only_an_orphan(
     monkeypatch.undo()
     assert profiles.all() == []
     assert len(profiles.orphans()) == 1
+
+
+@pytest.mark.parametrize("fail_on", ["main", "prev"])
+def test_an_interrupted_revert_loses_nothing_and_finishes_when_run_again(
+    profiles: Profiles, monkeypatch: pytest.MonkeyPatch, fail_on: str
+) -> None:
+    work = profiles.create("Work", claude(profiles, "alice", 1))
+    work = profiles.update_secret(work, claude(profiles, "alice", 2))
+    target = {"main": work.key, "prev": work.prev_key}[fail_on]
+    real_put = profiles.store.put
+
+    def crash(key: str, value: Sensitive) -> None:
+        if key == target:
+            raise OSError("power cut")
+        real_put(key, value)
+
+    monkeypatch.setattr(profiles.store, "put", crash)
+    with pytest.raises(OSError, match="power cut"):
+        profiles.revert(work)
+    monkeypatch.undo()
+
+    profiles.revert(profiles.get(work.id))
+    after = profiles.get(work.id)
+    assert b"refresh-1" in profiles.secret(after)[0].reveal()
+    assert b"refresh-2" in (profiles.store.get(after.prev_key) or Sensitive(b"")).reveal()
+    assert profiles.store.get(after.swap_key) is None

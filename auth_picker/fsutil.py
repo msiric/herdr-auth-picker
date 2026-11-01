@@ -180,6 +180,21 @@ def write_private(path: str, data: bytes, mode: int = 0o600) -> None:
     fsync_dir(directory)
 
 
+def create_private(path: str, data: bytes, mode: int = 0o600) -> bool:
+    """Create one of our files only if it does not exist. False if it already did."""
+    directory = secure_dir(os.path.dirname(os.path.abspath(path)))
+    tmp = _write_temp(directory, os.path.basename(path), data, mode)
+    try:
+        os.link(tmp, path)  # fails if the name exists: atomic create-if-absent
+    except FileExistsError:
+        return False
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+    fsync_dir(directory)
+    return True
+
+
 def remove_private(path: str) -> None:
     with contextlib.suppress(FileNotFoundError):
         os.unlink(path)

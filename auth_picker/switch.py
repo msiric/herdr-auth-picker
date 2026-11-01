@@ -165,6 +165,31 @@ class Switcher:
         value = expected.get("fingerprint") if expected else None
         return value if isinstance(value, str) else None
 
+    def adopt(self, rid: str, item: int, name: str | None = None) -> tuple[Profile, bool]:
+        """Save a login kept by a rescue as a profile. (profile, True if new)."""
+        match = [r for r in self.journals.rescues() if r.rid == rid]
+        if not match or not 0 <= item < len(match[0].kept):
+            raise SwitchError("missing", f"no rescue {rid} with item {item}")
+        rescue = match[0]
+        if rescue.cause == "contaminated":
+            raise SwitchError(
+                "contaminated",
+                "that login's tokens and identity disagree, so it cannot be saved as a "
+                "profile; log in again with the CLI instead",
+            )
+        backend = self.backends[rescue.kind]
+        with self._store_locks(backend):
+            secret = self.store.get(rescue.kept[item]["key"])
+            if secret is None:
+                raise SwitchError("missing", "that kept login is gone")
+            snapshot = backend.parse_secret(secret)
+            self._check_contamination(backend, snapshot)
+            saved = self.profiles.by_fingerprint(rescue.kind, snapshot.fingerprint)
+            if saved is not None:
+                return self.profiles.update_secret(saved, snapshot), False
+            email = snapshot.identity.email or snapshot.identity.account_id[:8]
+            return self.profiles.create((name or f"rescued {email}")[:MAX_LABEL], snapshot), True
+
     def recover(self, kind: str) -> str | None:
         """Finish or undo an interrupted switch. Returns what happened, if anything."""
         backend = self.backends[kind]
@@ -374,6 +399,7 @@ class Switcher:
                     backend.kind,
                     reason,
                     [("live login", live.secret, live.identity.describe(), live.fingerprint)],
+                    cause="contaminated",
                 )
                 raise SwitchError("contaminated", f"{reason}; nothing was changed, see `status`")
 
