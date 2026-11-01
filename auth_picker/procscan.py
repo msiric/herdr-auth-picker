@@ -26,6 +26,8 @@ _PINNED = re.compile(rf"(?:^|\s){PINNING_VAR}=\S")
 class Sessions:
     running: int = 0
     pinned: int = 0
+    # Codex's background app server, which keeps its login in memory.
+    servers: int = 0
 
 
 def kind_of(argv0: str, args: str) -> str | None:
@@ -95,14 +97,16 @@ def sessions(kind: str) -> Sessions:
     """Count this user's running sessions of ``kind``. Fails soft: unknown is zero."""
     mac = platform.system() == "Darwin"
     try:
-        pids = [
-            pid
+        found = [
+            (pid, args)
             for pid, argv0, args in (_macos() if mac else _linux())
             if kind_of(argv0, args) == kind and pid != os.getpid()
         ]
+        pids = [pid for pid, _ in found]
+        servers = sum(1 for _, args in found if kind == "codex" and " app-server" in args)
         pinned = 0
         if kind == "claude" and pids:
             pinned = _pinned_macos(pids) if mac else _pinned_linux(pids)
     except (OSError, ProcessFailed):
         return Sessions()
-    return Sessions(running=len(pids), pinned=pinned)
+    return Sessions(running=len(pids), pinned=pinned, servers=servers)

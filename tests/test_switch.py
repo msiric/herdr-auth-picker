@@ -267,6 +267,15 @@ def test_codex_near_renewal_with_sessions_running_asks_first(tmp_path: Path) -> 
     assert w.switcher.switch("codex", "B", force=True).status == "switched"
 
 
+def test_a_codex_switch_says_when_the_background_server_needs_a_restart(
+    tmp_path: Path,
+) -> None:
+    w = _codex_world(tmp_path, running=0)
+    w.switcher.scan = lambda _kind: procscan.Sessions(running=1, servers=1)
+    outcome = w.switcher.switch("codex", "B", force=True)
+    assert any("codex app-server daemon restart" in note for note in outcome.notes)
+
+
 def test_codex_near_renewal_with_nothing_running_just_switches(tmp_path: Path) -> None:
     w = _codex_world(tmp_path, running=0)
     assert w.switcher.switch("codex", "B").status == "switched"

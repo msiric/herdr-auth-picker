@@ -223,7 +223,7 @@ class Switcher:
                 continue
             if result is not None:
                 raise result
-            return Outcome(backend.kind, "switched", label, describe, notes)
+            return Outcome(backend.kind, "switched", label, describe, notes + self._after(backend))
         raise SwitchError("unsettled", f"{backend.title}'s login kept changing; try again")
 
     def _install(
@@ -275,6 +275,22 @@ class Switcher:
             return SwitchError("did-not-take", f"the new login did not take; {put_back}")
         self._commit(journal)
         return None
+
+    def _after(self, backend: Backend) -> list[str]:
+        """What a switch could not reach: sessions that keep the old account (V4, V5)."""
+        sessions = self.scan(backend.kind)
+        notes = []
+        if sessions.pinned:
+            notes.append(
+                f"{sessions.pinned} running session(s) will not follow: "
+                f"{procscan.PINNING_VAR} is set in them; unset it and restart them"
+            )
+        if backend.kind == "codex" and sessions.servers:
+            notes.append(
+                "Codex's background server keeps the previous account until it restarts: "
+                "run `codex app-server daemon restart` (interrupts running Codex work)"
+            )
+        return notes
 
     def _commit(self, journal: Journal) -> None:
         pre = self.journals.pre_secret(journal)
