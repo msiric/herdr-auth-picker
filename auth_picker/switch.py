@@ -104,7 +104,10 @@ class Switcher:
             target = backend.parse_secret(secret)
             saved = self.profiles.by_fingerprint(kind, target.fingerprint)
             label = saved.label if saved else target.identity.describe()
-            return self._switch(backend, secret, target, label, force=force)
+            outcome = self._switch(backend, secret, target, label, force=force)
+            if outcome.status == "switched" and saved is not None:
+                self.profiles.mark_used(saved)
+            return outcome
 
     def save(self, kind: str, label: str | None = None) -> Profile:
         """Save the live login as a new profile."""
@@ -119,6 +122,24 @@ class Switcher:
             profile = self.profiles.create(name, live)
             self._write_expected(kind, live.fingerprint)
             return profile
+
+    def save_from(self, kind: str, source: Backend, label: str | None = None) -> Profile:
+        """Save a login from another CLI home, without touching the live one.
+
+        For Codex, this is how a second account is added safely: `codex login`
+        revokes whatever login its home held, so log in under a throwaway
+        CODEX_HOME and import it from there.
+        """
+        if source.store_id == self.backends[kind].store_id:
+            raise SwitchError("same-home", "that is the live home; use save without --from")
+        with self.profiles.locked():
+            snapshot = source.read_live()
+            if snapshot is None:
+                raise SwitchError("logged-out", f"nobody is logged in under {source.store_id}")
+            self._check_contamination(self.backends[kind], snapshot)
+            identity = snapshot.identity
+            name = label or (identity.email or identity.account_id).split("@")[0]
+            return self.profiles.create(name, snapshot)
 
     def sync(self, kind: str) -> Profile:
         """Update the saved copy of the live login from the live store."""

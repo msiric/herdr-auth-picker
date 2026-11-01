@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import sys
 import time
 import traceback
@@ -19,6 +20,7 @@ from auth_picker import __version__, badge, herdr, migrate
 from auth_picker.app import App
 from auth_picker.backends import KINDS
 from auth_picker.backends.base import Unsupported
+from auth_picker.backends.codex import CodexBackend
 from auth_picker.errors import AuthPickerError
 from auth_picker.redact import redact
 from auth_picker.switch import Outcome
@@ -104,6 +106,17 @@ def _cmd_undo(args: argparse.Namespace) -> int:
 
 def _cmd_save(args: argparse.Namespace) -> int:
     app = _app(args)
+    if args.source:
+        if args.kind != "codex":
+            raise AuthPickerError("from", "--from is supported for codex only")
+        source = CodexBackend(os.path.abspath(os.path.expanduser(args.source)))
+        profile = app.switcher.save_from("codex", source, args.name)
+        out(f"codex: saved as {profile.label} ({profile.identity.describe()})")
+        out(
+            f"delete {source.home} now: it holds that login in plaintext, and the saved "
+            "copy is all you need"
+        )
+        return 0
     kinds = [args.kind] if args.kind else list(KINDS)
     saved = 0
     for kind in kinds:
@@ -379,6 +392,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = add("save", _cmd_save, "save the live login(s) as a profile")
     kind(sub)
     sub.add_argument("--name", help="what to call it (default: from the account)")
+    sub.add_argument(
+        "--from",
+        dest="source",
+        metavar="DIR",
+        help="codex only: import from another CODEX_HOME (how to add a second account)",
+    )
     sub = add("switch", _cmd_switch, "switch to a saved login")
     kind(sub, required=True)
     sub.add_argument("name")

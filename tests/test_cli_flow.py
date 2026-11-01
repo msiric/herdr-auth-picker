@@ -140,3 +140,25 @@ def test_cleanup_removes_only_unreferenced_secrets(
     assert run(capsys, "cleanup", "--yes")[0] == 0
     assert world.profiles.orphans() == []
     assert world.profiles.secret(world.profiles.find("claude", "A"))
+
+
+def test_a_second_codex_account_comes_from_a_separate_home(
+    world: World, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tests.fakes import codex_auth  # noqa: PLC0415
+
+    (world.home / ".codex" / "auth.json").write_text(json.dumps(codex_auth("alice")))
+    live_before = (world.home / ".codex" / "auth.json").read_bytes()
+    other = tmp_path / "second-codex-home"
+    other.mkdir()
+    (other / "auth.json").write_text(json.dumps(codex_auth("bob")))
+
+    code, text = run(capsys, "save", "codex", "--from", str(other), "--name", "Bob")
+    assert code == 0
+    assert f"delete {other} now" in text
+    assert world.profiles.find("codex", "Bob").identity.email == "bob@example.com"
+    assert (world.home / ".codex" / "auth.json").read_bytes() == live_before
+
+    live_home = str(world.home / ".codex")
+    assert run(capsys, "save", "codex", "--from", live_home)[0] == 1
+    assert run(capsys, "save", "claude", "--from", str(other))[0] == 1

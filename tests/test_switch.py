@@ -93,6 +93,7 @@ def test_switch_moves_the_login_and_keeps_undo(world: World) -> None:
 
     world.switcher.undo("claude")
     assert world.who() == "alice@example.com"
+    assert world.profiles.find("claude", "A").last_used_at is not None
 
 
 def test_the_outgoing_login_is_saved_as_rotated(world: World) -> None:
