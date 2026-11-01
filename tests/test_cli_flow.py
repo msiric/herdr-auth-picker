@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from auth_picker import badge, cli
+from auth_picker import badge, cli, procscan
 from auth_picker.app import App
 from auth_picker.backends.claude import ClaudeBackend
 from auth_picker.config import Config
@@ -207,3 +207,42 @@ def test_the_badge_creates_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("HERDR_PLUGIN_CONFIG_DIR", str(tmp_path / "config"))
     App.load(readonly=True)
     assert not (tmp_path / "state").exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ((), "never", False),
+        (("--restart-codex",), "never", True),
+        ((), "always", True),
+        ((), "ask", False),
+    ],  # ask, with no terminal to ask on, only tells
+)
+def test_codex_background_server_restart_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: tuple[tuple[str, ...], str, bool],
+) -> None:
+    from tests.test_switch import _codex_world  # noqa: PLC0415
+
+    argv, policy, restarted = case
+    w = _codex_world(tmp_path, running=0)
+    w.switcher.scan = lambda _kind: procscan.Sessions(running=1, servers=1)
+    calls: list[str] = []
+    monkeypatch.setattr(w.profiles.backends["codex"], "restart_server", lambda: calls.append("x"))
+    app = App(
+        Config(codex_restart=policy),
+        w.profiles.store,
+        w.profiles.backends,
+        w.profiles,
+        w.journals,
+        w.switcher,
+    )
+    monkeypatch.setattr(App, "load", classmethod(lambda _cls, *_a, **_k: app))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    code, text = run(capsys, "switch", "codex", "B", "--force", *argv)
+    assert code == 0
+    assert bool(calls) is restarted
+    assert ("restarted Codex's background server" in text) is restarted
+    assert ("still uses the previous account" in text) is not restarted

@@ -74,16 +74,48 @@ def _after_change(app: App, title: str, body: str) -> None:
         herdr.notify(title, body)
 
 
-def _report(app: App, outcome: Outcome) -> int:
+CODEX_STALE = (
+    "Codex's background server still uses the previous account; restart it with "
+    "`codex app-server daemon restart`, or switch with --restart-codex (open "
+    "conversations are saved; a reply in progress is cut off)"
+)
+
+
+def _restart_codex(app: App, outcome: Outcome, forced: bool) -> list[str]:
+    """Apply the codex_restart policy. Returns the note to show, if any."""
+    if not outcome.codex_server_stale:
+        return []
+    policy = "always" if forced else app.config.codex_restart
+    if policy == "ask" and sys.stdin.isatty() and not herdr.invoked_by_herdr():
+        sys.stdout.write(
+            redact(
+                f"Restart Codex's background server so running sessions use {outcome.label}? "
+                "A reply in progress is cut off. [y/N] "
+            )
+        )
+        sys.stdout.flush()
+        policy = "always" if sys.stdin.readline().strip().lower() in ("y", "yes") else "never"
+    if policy != "always":
+        return [CODEX_STALE]
+    backend = app.backends["codex"]
+    restart = getattr(backend, "restart_server", None)
+    if restart is None:
+        return [CODEX_STALE]
+    restart()
+    return [f"restarted Codex's background server: Codex now uses {outcome.label}"]
+
+
+def _report(app: App, outcome: Outcome, restart_codex: bool = False) -> int:
     title = f"{TITLES[outcome.kind]}: {outcome.label}"
     if outcome.status == "already":
         out(f"{outcome.kind}: already on {outcome.label}")
         return 0
     body = outcome.describe if app.config.notify_identity else ""
     out(f"{outcome.kind}: switched to {outcome.label}")
-    for note in outcome.notes:
+    notes = outcome.notes + _restart_codex(app, outcome, restart_codex)
+    for note in notes:
         out(f"  note: {note}")
-    _after_change(app, title, "; ".join([b for b in [body, *outcome.notes] if b]))
+    _after_change(app, title, "; ".join([b for b in [body, *notes] if b]))
     return 0
 
 
@@ -92,17 +124,22 @@ def _report(app: App, outcome: Outcome) -> int:
 
 def _cmd_switch(args: argparse.Namespace) -> int:
     app = _app(args)
-    return _report(app, app.switcher.switch(args.kind, args.name, force=args.force))
+    outcome = app.switcher.switch(args.kind, args.name, force=args.force)
+    return _report(app, outcome, args.restart_codex)
 
 
 def _cmd_next(args: argparse.Namespace) -> int:
     app = _app(args)
-    return _report(app, app.switcher.next(_kind(app, args.kind), force=args.force))
+    return _report(
+        app, app.switcher.next(_kind(app, args.kind), force=args.force), args.restart_codex
+    )
 
 
 def _cmd_undo(args: argparse.Namespace) -> int:
     app = _app(args)
-    return _report(app, app.switcher.undo(_kind(app, args.kind), force=args.force))
+    return _report(
+        app, app.switcher.undo(_kind(app, args.kind), force=args.force), args.restart_codex
+    )
 
 
 def _cmd_save(args: argparse.Namespace) -> int:
@@ -412,6 +449,9 @@ def _kind_arg(sub: argparse.ArgumentParser, required: bool = False) -> None:
     sub.add_argument("kind", choices=KINDS, nargs=None if required else "?")
 
 
+RESTART_HELP = "after a Codex switch, restart Codex's background server without asking"
+
+
 def _switching_commands(commands: Commands) -> None:
     _add(commands, "status", _cmd_status, "show what is logged in, saved, and needs attention")
     _add(commands, "ui", _cmd_ui, "the account picker (herdr runs this in an overlay)")
@@ -429,6 +469,7 @@ def _switching_commands(commands: Commands) -> None:
     _kind_arg(sub, required=True)
     sub.add_argument("name")
     sub.add_argument("--force", action="store_true", help="switch even if a renewal may be due")
+    sub.add_argument("--restart-codex", action="store_true", help=RESTART_HELP)
     for name, handler, text in (
         ("next", _cmd_next, "switch to the next saved login"),
         ("undo", _cmd_undo, "switch back to the login before the last switch"),
@@ -436,6 +477,7 @@ def _switching_commands(commands: Commands) -> None:
         sub = _add(commands, name, handler, text)
         _kind_arg(sub)
         sub.add_argument("--force", action="store_true", help="switch even if a renewal may be due")
+        sub.add_argument("--restart-codex", action="store_true", help=RESTART_HELP)
     sub = _add(commands, "sync", _cmd_sync, "update the live login's saved copy")
     _kind_arg(sub)
 

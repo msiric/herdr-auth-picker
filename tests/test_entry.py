@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from auth_picker import __version__
 from tests.conftest import ROOT
 
@@ -32,3 +34,33 @@ def test_pythonpath_cannot_shadow_modules_without_isolation(tmp_path: Path) -> N
     result = _run([sys.executable, MAIN, "--version"], env=env)
     assert result.returncode == 0, result.stderr
     assert "shadowed" not in result.stdout + result.stderr
+
+
+LAUNCHER = str(ROOT / "bin" / "auth-picker")
+OLD_PYTHON = "#!/bin/sh\n# pretends to be Apple's Python 3.9\nexit 1\n"
+
+
+def _fake_python(directory: Path, name: str = "python3") -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    fake = directory / name
+    fake.write_text(OLD_PYTHON)
+    fake.chmod(0o755)
+    return fake
+
+
+def test_launcher_skips_a_python_that_is_too_old(tmp_path: Path) -> None:
+    _fake_python(tmp_path / "old")
+    real = str(Path(sys.executable).parent)
+    env = {"PATH": f"{tmp_path / 'old'}:{real}:/usr/bin:/bin"}
+    result = _run(["/bin/sh", LAUNCHER, "--version"], env=env)
+    assert result.returncode == 0, result.stderr
+    assert __version__ in result.stdout
+
+
+@pytest.mark.parametrize("given", ["python3", "old"])
+def test_launcher_refuses_a_bad_explicit_python(tmp_path: Path, given: str) -> None:
+    value = str(_fake_python(tmp_path / "old")) if given == "old" else given
+    env = {"PATH": "/usr/bin:/bin", "AUTH_PICKER_PYTHON": value}
+    result = _run(["/bin/sh", LAUNCHER, "--version"], env=env)
+    assert result.returncode == 2
+    assert "AUTH_PICKER_PYTHON" in result.stderr

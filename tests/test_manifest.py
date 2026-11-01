@@ -27,10 +27,10 @@ def _commands() -> list[list[str]]:
     return [entry["command"] for entry in entries]
 
 
-@pytest.mark.parametrize("command", _commands(), ids=lambda c: " ".join(c[3:]))
+@pytest.mark.parametrize("command", _commands(), ids=lambda c: " ".join(c[2:]))
 def test_every_manifest_command_is_isolated_and_parses(command: list[str]) -> None:
-    assert command[:3] == ["python3", "-I", "main.py"]
-    build_parser().parse_args(command[3:])  # raises SystemExit if the CLI does not accept it
+    assert command[:2] == ["/bin/sh", "bin/auth-picker"]
+    build_parser().parse_args(command[2:])  # raises SystemExit if the CLI does not accept it
 
 
 def test_versions_agree() -> None:

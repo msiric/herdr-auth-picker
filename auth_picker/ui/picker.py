@@ -167,10 +167,35 @@ class Picker:
             return
         if outcome.status == "already":
             self.message = f"already on {outcome.label}"
-        else:
-            notes = "; ".join(outcome.notes)
-            self.message = f"switched to {outcome.label}" + (f" ({notes})" if notes else "")
-            badge.stamp(self.app)
+            return
+        notes = list(outcome.notes)
+        if outcome.codex_server_stale:
+            notes.append(self._codex_restart(outcome.label))
+        joined = "; ".join(notes)
+        self.message = f"switched to {outcome.label}" + (f" ({joined})" if joined else "")
+        badge.stamp(self.app)
+
+    def _codex_restart(self, label: str) -> str:
+        policy = self.app.config.codex_restart
+        if policy == "ask":
+            policy = (
+                "always"
+                if self.confirm(
+                    f"Restart Codex's background server so running sessions use {label}? "
+                    "Open conversations are saved; a reply in progress is cut off."
+                )
+                else "never"
+            )
+        if policy != "always":
+            return "Codex keeps the previous account until its background server restarts"
+        restart = getattr(self.app.backends["codex"], "restart_server", None)
+        if restart is None:
+            return "Codex keeps the previous account until its background server restarts"
+        try:
+            restart()
+        except AuthPickerError as exc:
+            return exc.message
+        return "Codex's background server restarted"
 
     def _save(self, kind: str) -> None:
         identity = self.app.backends[kind].live_identity()

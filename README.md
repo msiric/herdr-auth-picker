@@ -39,7 +39,8 @@ in [`docs/threat-model.md`](docs/threat-model.md).
 
 ## Requirements
 
-- herdr ≥ 0.9.0, Python ≥ 3.11, macOS or Linux. No other dependencies.
+- herdr ≥ 0.9.0, Python ≥ 3.11 (found automatically, even when `python3` is
+  Apple's 3.9), macOS or Linux. No other dependencies.
 - Tested with **Claude Code 2.1.309** and **Codex 0.163.0**. Codex must use
   file storage (`cli_auth_credentials_store = "file"`, the default).
 
@@ -72,7 +73,7 @@ Then add your other accounts:
 
   ```sh
   CODEX_HOME=/tmp/codex-second codex login     # sign in as the other account
-  python3 -I main.py save codex --from /tmp/codex-second
+  bin/auth-picker save codex --from /tmp/codex-second
   rm -rf /tmp/codex-second                      # it holds that login in plaintext
   ``` To bring over the old plugin's profiles, see
 [Moving from herdr-account-switch](#moving-from-herdr-account-switch).
@@ -104,7 +105,9 @@ command = "msiric.auth-picker.open"
 description = "account picker"
 ```
 
-Every action is also a command. `python3 -I main.py --help` lists them, and
+Every action is also a command: `bin/auth-picker` in the plugin directory
+finds a Python 3.11 or newer for you (set `AUTH_PICKER_PYTHON` to choose one).
+`bin/auth-picker --help` lists them, and
 `switch`, `rename`, `delete`, `rescue`, `usage` and `import-legacy` are
 available only this way.
 
@@ -123,7 +126,7 @@ Or show it once, in the tab bar. Use the directory `herdr plugin list` reports:
 ```toml
 [ui]
 tab_bar_right = [
-  { type = "command", command = "python3 -I /path/to/herdr-auth-picker/main.py badge", interval_seconds = 30, timeout_seconds = 5 },
+  { type = "command", command = "/path/to/herdr-auth-picker/bin/auth-picker badge", interval_seconds = 30, timeout_seconds = 5 },
 ]
 ```
 
@@ -144,6 +147,7 @@ bad values are errors that `status` reports, never silently ignored.
 | `badge_format` | `"{glyph} {label}"` | any of `{glyph}`, `{label}`, `{kind}`, `{usage}` |
 | `glyph` | `"👤"` | the badge character |
 | `lock_timeout_s` | `5` | how long to wait for another switch, or for Claude's own locks |
+| `codex_restart` | `"ask"` | after a Codex switch, restart Codex's background server: `ask` (the picker and a terminal ask; actions only tell you), `always`, or `never` |
 | `[usage] enabled` | `false` | read the logged-in account's usage from the provider |
 | `[usage] ttl_s` | `300` | how often, at most, in seconds (minimum 120) |
 
@@ -175,9 +179,12 @@ bad values are errors that `status` reports, never silently ignored.
   That newer login is saved to its profile when you switch away, and the copy
   before it is kept: `revert <kind> <name> --yes` swaps them back.
 - **Codex still uses the old account after a switch.** Codex sessions talk to
-  a background server that keeps its login in memory. Run
-  `codex app-server daemon restart` (it interrupts running Codex work); a
-  switch says when this applies.
+  a background server that keeps its login in memory, and Codex refuses to
+  reload a different account on its own. Restarting it is the only way: the
+  picker offers it (`codex_restart`), `--restart-codex` does it, and
+  `codex app-server daemon restart` does it by hand. Open conversations are
+  saved; a reply in progress is cut off. The restarted server inherits the
+  environment of whatever restarted it.
 - **A rescue holds the login you want.** `rescue --adopt ID --item N` saves it
   as a profile; then clear the rescue.
 
@@ -186,8 +193,8 @@ bad values are errors that `status` reports, never silently ignored.
 From the plugin's directory:
 
 ```sh
-python3 -I main.py import-legacy            # shows what it would import
-python3 -I main.py import-legacy --apply    # imports the ready ones
+bin/auth-picker import-legacy            # shows what it would import
+bin/auth-picker import-legacy --apply    # imports the ready ones
 ```
 
 It never changes the old files. Once each imported profile has switched in
@@ -197,7 +204,8 @@ directories, which the import lists: they hold logins in plaintext.
 ## Limits
 
 - Running Claude sessions follow a switch on their next request (verified).
-  Running Codex sessions follow only once Codex's background server restarts.
+  Running Codex sessions follow only once Codex's background server restarts,
+  which the plugin offers to do right after the switch.
 - Credential layouts are the CLIs' private business. Unknown shapes are
   refused rather than guessed at, so a CLI update can require an update here.
 - The usage endpoints are undocumented. Anthropic's terms say developers "may

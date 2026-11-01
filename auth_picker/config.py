@@ -38,6 +38,8 @@ class Config:
     badge_format: str = "{glyph} {label}"
     glyph: str = "\N{BUST IN SILHOUETTE}"
     lock_timeout_s: float = 5.0
+    # After a Codex switch, restart Codex's background server? ask | always | never
+    codex_restart: str = "ask"
     usage: UsageConfig = field(default_factory=UsageConfig)
 
 
@@ -90,6 +92,15 @@ def _badge_format(value: Any) -> str:
     return text
 
 
+def _choice(*allowed: str) -> Validator:
+    def check(value: Any) -> str:
+        if value not in allowed:
+            raise ValueError("must be one of " + ", ".join(repr(a) for a in allowed))
+        return str(value)
+
+    return check
+
+
 _TOP: dict[str, Validator] = {
     "notify": _boolean,
     "notify_identity": _boolean,
@@ -97,6 +108,7 @@ _TOP: dict[str, Validator] = {
     "badge_format": _badge_format,
     "glyph": _text(8),
     "lock_timeout_s": _number(0.5, 60),
+    "codex_restart": _choice("ask", "always", "never"),
 }
 _USAGE: dict[str, Validator] = {
     "enabled": _boolean,

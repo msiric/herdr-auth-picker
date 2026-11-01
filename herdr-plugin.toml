@@ -5,52 +5,52 @@ min_herdr_version = "0.9.0"
 description = "Switch Claude Code and Codex logins in herdr, without losing them."
 platforms = ["macos", "linux"]
 
-# Every command runs as `python3 -I main.py ...`. Isolated mode ignores
-# PYTHONPATH, PYTHONSTARTUP and user site-packages, so nothing in the
-# environment can shadow this plugin's modules or the standard library.
+# Every command runs through bin/auth-picker, which finds a Python 3.11 or
+# newer (Apple's python3 is often 3.9) and runs main.py in isolated mode, so
+# PYTHONPATH, PYTHONSTARTUP and user site-packages cannot shadow its modules.
 
 # Finish or undo a switch a crash interrupted, then put the badge back on panes.
 [[startup]]
-command = ["python3", "-I", "main.py", "recover"]
+command = ["/bin/sh", "bin/auth-picker", "recover"]
 
 [[actions]]
 id = "open"
 title = "Auth Picker: open"
 contexts = ["global", "pane"]
-command = ["python3", "-I", "main.py", "open"]
+command = ["/bin/sh", "bin/auth-picker", "open"]
 
 [[actions]]
 id = "next"
 title = "Auth Picker: switch to the next account"
 contexts = ["global", "pane"]
-command = ["python3", "-I", "main.py", "next"]
+command = ["/bin/sh", "bin/auth-picker", "next"]
 
 [[actions]]
 id = "undo"
 title = "Auth Picker: switch back to the previous account"
 contexts = ["global", "pane"]
-command = ["python3", "-I", "main.py", "undo"]
+command = ["/bin/sh", "bin/auth-picker", "undo"]
 
 [[actions]]
 id = "save"
 title = "Auth Picker: save the current logins"
 contexts = ["global"]
-command = ["python3", "-I", "main.py", "save"]
+command = ["/bin/sh", "bin/auth-picker", "save"]
 
 [[actions]]
 id = "sync"
 title = "Auth Picker: update the current login's saved copy"
 contexts = ["global", "pane"]
-command = ["python3", "-I", "main.py", "sync"]
+command = ["/bin/sh", "bin/auth-picker", "sync"]
 
 [[actions]]
 id = "status"
 title = "Auth Picker: status"
 contexts = ["global"]
-command = ["python3", "-I", "main.py", "status"]
+command = ["/bin/sh", "bin/auth-picker", "status"]
 
 [[panes]]
 id = "picker"
 title = "Accounts"
-command = ["python3", "-I", "main.py", "ui"]
+command = ["/bin/sh", "bin/auth-picker", "ui"]
 placement = "overlay"

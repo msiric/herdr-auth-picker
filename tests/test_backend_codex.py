@@ -114,3 +114,24 @@ def test_locks_wait_for_codex(home: Path) -> None:
         fcntl.flock(handle, fcntl.LOCK_EX)
         with pytest.raises(LockTimeout, match="Codex"), CodexBackend(str(home)).locks(0.3):
             pass
+
+
+@pytest.mark.parametrize(("status", "ok"), [("restarted", True), ("failed", False)])
+def test_restarting_codexs_background_server(home: Path, status: str, ok: bool) -> None:
+    from auth_picker.errors import AuthPickerError  # noqa: PLC0415
+
+    managed = home / "packages" / "app-server-daemon" / "current" / "bin" / "codex"
+    managed.parent.mkdir(parents=True)
+    calls = home / "calls"
+    managed.write_text(
+        f'#!/bin/sh\necho "$*" >> "{calls}"\n'
+        f'echo \'{{"event":"x"}}\'\necho \'{{"status":"{status}"}}\'\n'
+    )
+    managed.chmod(0o755)
+    backend = CodexBackend(str(home))
+    if ok:
+        backend.restart_server()
+    else:
+        with pytest.raises(AuthPickerError, match="did not restart"):
+            backend.restart_server()
+    assert calls.read_text().strip() == "app-server daemon restart"

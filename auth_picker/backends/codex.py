@@ -10,10 +10,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import time
 import tomllib
 from typing import Any
 
+from auth_picker import proc
 from auth_picker.backends.base import (
     SCHEMA,
     Identity,
@@ -27,7 +29,7 @@ from auth_picker.backends.base import (
     sha256_hex,
     text,
 )
-from auth_picker.errors import Conflict, StaleSnapshot
+from auth_picker.errors import AuthPickerError, Conflict, StaleSnapshot
 from auth_picker.foreignlock import Flock, Held, hold_all
 from auth_picker.fsutil import ForeignFile, read_foreign, write_foreign
 from auth_picker.redact import Sensitive
@@ -54,6 +56,38 @@ class CodexBackend:
     def __init__(self, home: str) -> None:
         self.home = home
         self.auth_file = os.path.join(home, "auth.json")
+
+    def _codex_binary(self) -> str | None:
+        """The Codex that manages the background server: its own copy, else PATH's."""
+        managed = os.path.join(
+            self.home, "packages", "app-server-daemon", "current", "bin", "codex"
+        )
+        if os.access(managed, os.X_OK):
+            return os.path.realpath(managed)
+        found = shutil.which("codex")
+        return os.path.realpath(found) if found else None
+
+    def restart_server(self) -> None:
+        """Restart Codex's background app server so it loads the switched login.
+
+        Codex keeps the login in that server's memory and will not reload a
+        different account on its own (it refuses: reload_if_account_id_matches).
+        The restart saves open conversations; a reply in progress is cut off.
+        """
+        program = self._codex_binary()
+        if program is None:
+            raise AuthPickerError("codex-restart", "could not find Codex to restart its server")
+        result = proc.run([program, "app-server", "daemon", "restart"], timeout=60)
+        status = None
+        for line in reversed(result.stdout.decode("utf-8", "replace").splitlines()):
+            with contextlib.suppress(ValueError):
+                status = json.loads(line).get("status")
+                break
+        if not result.ok or status != "restarted":
+            raise AuthPickerError(
+                "codex-restart",
+                "Codex's background server did not restart; run `codex app-server daemon restart`",
+            )
 
     @property
     def store_id(self) -> str:

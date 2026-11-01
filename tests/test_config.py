@@ -44,6 +44,7 @@ def test_valid_file(tmp_path: Path) -> None:
         ('badge_format = "{name.__class__}"\n', "badge_format may only use"),
         ('glyph = "\\u001b[31m"\n', "glyph must not contain control characters"),
         ('usage = "on"\n', "usage must be a table"),
+        ('codex_restart = "sometimes"\n', "codex_restart must be one of"),
     ],
 )
 def test_invalid_settings_are_errors(tmp_path: Path, text: str, complaint: str) -> None:

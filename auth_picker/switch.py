@@ -50,6 +50,8 @@ class Outcome:
     label: str
     describe: str
     notes: list[str] = field(default_factory=list)
+    # Codex's background server is running and still holds the previous login.
+    codex_server_stale: bool = False
 
 
 class Switcher:
@@ -255,7 +257,8 @@ class Switcher:
                 continue
             if result is not None:
                 raise result
-            return Outcome(backend.kind, "switched", label, describe, notes + self._after(backend))
+            after, stale = self._after(backend)
+            return Outcome(backend.kind, "switched", label, describe, notes + after, stale)
         raise SwitchError("unsettled", f"{backend.title}'s login kept changing; try again")
 
     def _install(
@@ -309,7 +312,7 @@ class Switcher:
         self._commit(journal)
         return None
 
-    def _after(self, backend: Backend) -> list[str]:
+    def _after(self, backend: Backend) -> tuple[list[str], bool]:
         """What a switch could not reach: sessions that keep the old account (V4, V5)."""
         sessions = self.scan(backend.kind)
         notes = []
@@ -323,12 +326,8 @@ class Switcher:
                 f"{sessions.pinned} running session(s) will not follow: "
                 f"{procscan.PINNING_VAR} is set in them; unset it and restart them"
             )
-        if backend.kind == "codex" and sessions.servers:
-            notes.append(
-                "Codex's background server keeps the previous account until it restarts: "
-                "run `codex app-server daemon restart` (interrupts running Codex work)"
-            )
-        return notes
+        stale = backend.kind == "codex" and sessions.servers > 0
+        return notes, stale
 
     def _commit(self, journal: Journal) -> None:
         pre = self.journals.pre_secret(journal)

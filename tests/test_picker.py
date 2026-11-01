@@ -155,3 +155,28 @@ def test_drawing_fits_any_window(world: World, size: tuple[int, int]) -> None:
     screen = TinyScreen(*size)
     draw(screen, picker, rows, {})
     assert all(len(line) < size[1] for line in screen.lines.values())
+
+
+@pytest.mark.parametrize("yes", [True, False])
+def test_the_picker_asks_before_restarting_codex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, yes: bool
+) -> None:
+    from auth_picker import procscan  # noqa: PLC0415
+    from tests.test_switch import _codex_world  # noqa: PLC0415
+
+    w = _codex_world(tmp_path, running=0)
+    w.switcher.scan = lambda _kind: procscan.Sessions(running=1, servers=1)
+    calls: list[str] = []
+    monkeypatch.setattr(w.profiles.backends["codex"], "restart_server", lambda: calls.append("x"))
+    asked: list[str] = []
+
+    def confirm(question: str) -> bool:
+        asked.append(question)
+        return yes if question.startswith("Restart Codex") else True  # yes to the renewal guard
+
+    app = _picker(w, Answers()).app
+    picker = Picker(app, Answers().ask, confirm)
+    _select(picker, "B")
+    picker.handle("enter")
+    assert asked[-1].startswith("Restart Codex's background server")
+    assert bool(calls) is yes
