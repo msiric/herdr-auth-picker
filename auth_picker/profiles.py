@@ -104,10 +104,20 @@ def _parse_entry(raw: Any) -> Profile:
     identity_raw = raw["identity"]
     if not isinstance(identity_raw, dict) or not isinstance(identity_raw.get("account_id"), str):
         raise ValueError("bad identity")
-    fields = {k: identity_raw.get(k) for k in Identity.__dataclass_fields__}
-    if any(v is not None and not isinstance(v, str) for v in fields.values()):
-        raise ValueError("bad identity")
-    identity = Identity(**fields)
+
+    def optional(key: str) -> str | None:
+        value = identity_raw.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("bad identity")
+        return value
+
+    identity = Identity(
+        account_id=identity_raw["account_id"],
+        subject_id=optional("subject_id"),
+        email=optional("email"),
+        org_name=optional("org_name"),
+        plan=optional("plan"),
+    )
     profile = Profile(
         id=str(uuid.UUID(raw["id"])),
         kind=raw["kind"],

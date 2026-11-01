@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from auth_picker import cli, migrate
+from auth_picker.app import App
 from auth_picker.profiles import Profiles
 from auth_picker.secretstore import FileStore
 from tests.fakes import claude_account, claude_blob, codex_auth, make_backends
@@ -112,7 +113,7 @@ def test_cli_dry_run_imports_nothing(
         def __init__(self) -> None:
             self.profiles = profiles
 
-    monkeypatch.setattr(cli.App, "load", classmethod(lambda _cls, _path=None: FakeApp()))
+    monkeypatch.setattr(App, "load", classmethod(lambda _cls, _path=None: FakeApp()))
     assert cli.main(["import-legacy", "--from", str(legacy)]) == 0
     assert "run again with --apply" in capsys.readouterr().out
     assert profiles.all() == []
