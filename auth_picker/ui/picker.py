@@ -112,7 +112,7 @@ class Picker:
                 )
             )
         elif key == "u" and (kind := self._kind_here(rows)):
-            self._attempt(lambda force: self.app.switcher.undo(kind, force=force))
+            self._undo(kind)
         elif key == "s" and (kind := self._kind_here(rows)):
             self._save(kind)
         elif key == "r" and row and row.profile:
@@ -120,6 +120,9 @@ class Picker:
         elif key == "x" and row and row.profile:
             self._delete(row.profile, row.live)
         return True
+
+    def _undo(self, kind: str) -> None:
+        self._attempt(lambda force: self.app.switcher.undo(kind, force=force))
 
     def _attempt(self, action: Callable[[bool], Outcome]) -> None:
         try:
