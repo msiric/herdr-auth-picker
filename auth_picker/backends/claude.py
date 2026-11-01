@@ -206,6 +206,25 @@ class ClaudeBackend:
 
     # -- reading -----------------------------------------------------------
 
+    def live_identity(self) -> Identity | None:
+        """Who is logged in, from the config file alone: no Keychain read.
+
+        For the badge, which runs every few seconds. Not proof of anything.
+        """
+        found = read_foreign(self.paths.identity_file, MAX_CONFIG_BYTES)
+        if found is None:
+            return None
+        with contextlib.suppress(Inconsistent):
+            account = load_json_object(found.data, "config").get("oauthAccount")
+            if isinstance(account, dict) and text(account, "accountUuid"):
+                return Identity(
+                    account_id=account["accountUuid"],
+                    subject_id=text(account, "organizationUuid"),
+                    email=text(account, "emailAddress"),
+                    org_name=text(account, "organizationName"),
+                )
+        return None
+
     def _read_identity(self) -> ForeignFile:
         found = read_foreign(self.paths.identity_file, MAX_CONFIG_BYTES)
         if found is None:

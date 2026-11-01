@@ -98,6 +98,13 @@ class CodexBackend:
         auth = load_json_object(found.data, "auth.json")
         return self._snapshot({"schema": SCHEMA, "kind": self.kind, "auth": auth}, found)
 
+    def live_identity(self) -> Identity | None:
+        try:
+            snapshot = self.read_live()
+        except (Inconsistent, Unsupported):
+            return None
+        return snapshot.identity if snapshot else None
+
     def parse_secret(self, secret: Sensitive) -> Snapshot:
         return self._snapshot(secret_object(secret, self.kind), None)
 

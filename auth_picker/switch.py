@@ -24,7 +24,7 @@ from auth_picker.foreignlock import Held
 from auth_picker.fsutil import read_private, secure_dir, write_private
 from auth_picker.journal import Journal, JournalStore
 from auth_picker.lock import FileLock
-from auth_picker.profiles import MAX_LABEL, ProfileError, Profiles
+from auth_picker.profiles import MAX_LABEL, Profile, ProfileError, Profiles
 from auth_picker.redact import Sensitive
 
 # A token this close to expiry may be renewed by a running session any moment.
@@ -105,6 +105,40 @@ class Switcher:
             saved = self.profiles.by_fingerprint(kind, target.fingerprint)
             label = saved.label if saved else target.identity.describe()
             return self._switch(backend, secret, target, label, force=force)
+
+    def save(self, kind: str, label: str | None = None) -> Profile:
+        """Save the live login as a new profile."""
+        backend = self.backends[kind]
+        with self._locked(backend):
+            live = backend.read_live()
+            if live is None:
+                raise SwitchError("logged-out", f"{backend.title}: nobody is logged in")
+            self._check_contamination(backend, live)
+            identity = live.identity
+            name = label or (identity.email or identity.account_id).split("@")[0]
+            profile = self.profiles.create(name, live)
+            self._write_expected(kind, live.fingerprint)
+            return profile
+
+    def sync(self, kind: str) -> Profile:
+        """Update the saved copy of the live login from the live store."""
+        backend = self.backends[kind]
+        with self._locked(backend):
+            live = backend.read_live()
+            if live is None:
+                raise SwitchError("logged-out", f"{backend.title}: nobody is logged in")
+            self._check_contamination(backend, live)
+            saved = self.profiles.by_fingerprint(kind, live.fingerprint)
+            if saved is None:
+                raise SwitchError("unsaved", f"{backend.title}: the live login is not saved yet")
+            updated = self.profiles.update_secret(saved, live)
+            self._write_expected(kind, live.fingerprint)
+            return updated
+
+    def expected_fingerprint(self, kind: str) -> str | None:
+        expected = self._read_expected(kind)
+        value = expected.get("fingerprint") if expected else None
+        return value if isinstance(value, str) else None
 
     def recover(self, kind: str) -> str | None:
         """Finish or undo an interrupted switch. Returns what happened, if anything."""

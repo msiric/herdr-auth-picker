@@ -9,6 +9,34 @@ platforms = ["macos", "linux"]
 # PYTHONPATH, PYTHONSTARTUP and user site-packages, so nothing in the
 # environment can shadow this plugin's modules or the standard library.
 
+# Finish or undo a switch a crash interrupted, then put the badge back on panes.
+[[startup]]
+command = ["python3", "-I", "main.py", "recover"]
+
+[[actions]]
+id = "next"
+title = "Auth Picker: switch to the next account"
+contexts = ["global", "pane"]
+command = ["python3", "-I", "main.py", "next"]
+
+[[actions]]
+id = "undo"
+title = "Auth Picker: switch back to the previous account"
+contexts = ["global", "pane"]
+command = ["python3", "-I", "main.py", "undo"]
+
+[[actions]]
+id = "save"
+title = "Auth Picker: save the current logins"
+contexts = ["global"]
+command = ["python3", "-I", "main.py", "save"]
+
+[[actions]]
+id = "sync"
+title = "Auth Picker: update the current login's saved copy"
+contexts = ["global", "pane"]
+command = ["python3", "-I", "main.py", "sync"]
+
 [[actions]]
 id = "status"
 title = "Auth Picker: status"
