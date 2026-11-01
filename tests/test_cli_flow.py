@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 from auth_picker import badge, cli, procscan
 from auth_picker.app import App
+from auth_picker.backends.base import Snapshot
 from auth_picker.backends.claude import ClaudeBackend
 from auth_picker.config import Config
 from tests.test_switch import World
@@ -246,3 +248,79 @@ def test_codex_background_server_restart_policy(
     assert bool(calls) is restarted
     assert ("restarted Codex's background server" in text) is restarted
     assert ("still uses the previous account" in text) is not restarted
+
+
+def _event(monkeypatch: pytest.MonkeyPatch, agent: str, status: str | None) -> None:
+    data = {"type": "x", "pane_id": "w1:p1", "agent": agent}
+    if status is not None:
+        data["agent_status"] = status
+    monkeypatch.setenv("HERDR_PLUGIN_EVENT_JSON", json.dumps({"event": "x", "data": data}))
+
+
+def test_events_from_other_agents_load_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("loaded the app for a copilot pane")
+
+    monkeypatch.setattr(App, "load", classmethod(boom))
+    _event(monkeypatch, "copilot", "idle")
+    assert run(capsys, "event")[0] == 0
+    _event(monkeypatch, "claude", "working")  # mid-turn: nothing to do either
+    assert run(capsys, "event")[0] == 0
+
+
+def test_a_finished_turn_reads_usage_and_restamps(
+    world: World, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from auth_picker.usage import Reading, Usage  # noqa: PLC0415
+
+    world.log_in("alice")
+    world.save("A", "alice")
+    app: App = world.app  # type: ignore[attr-defined]
+    refreshed: list[str] = []
+    stamped: list[object] = []
+
+    class FakeUsage(Usage):
+        def refresh(self, snapshot: Snapshot) -> Reading:
+            refreshed.append(snapshot.fingerprint)
+            return Reading()
+
+    app.usage = FakeUsage(str(world.root / "state"), 300)
+    monkeypatch.setattr(badge, "stamp", lambda _app, panes=None: stamped.append(panes))
+    _event(monkeypatch, "claude", "idle")
+    assert run(capsys, "event")[0] == 0
+    assert refreshed == [world.live().fingerprint]
+    assert stamped == [None]
+
+    _event(monkeypatch, "claude", None)  # a newly detected pane: badge just that one
+    assert run(capsys, "event")[0] == 0
+    assert stamped[-1] == {"w1:p1"}
+
+
+def test_stamp_puts_usage_on_its_own_token(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    from auth_picker import herdr  # noqa: PLC0415
+    from auth_picker.usage import Reading, Usage, Window  # noqa: PLC0415
+
+    world.log_in("alice")
+    world.save("Work", "alice")
+    app: App = world.app  # type: ignore[attr-defined]
+    app.usage = Usage(str(world.root / "state"), 300)
+    fingerprint = world.live().fingerprint
+    monkeypatch.setattr(
+        app.usage,
+        "cached",
+        lambda: {fingerprint: Reading(read_at=time.time(), windows=[Window("session", 42, None)])},
+    )
+    monkeypatch.setattr(
+        herdr,
+        "agents",
+        lambda: [{"pane_id": "p1", "agent": "claude"}, {"pane_id": "p2", "agent": "copilot"}],
+    )
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(herdr, "set_badge", lambda *a: calls.append(("set", *a)))
+    monkeypatch.setattr(herdr, "clear_badge", lambda *a: calls.append(("clear", *a)))
+    badge.stamp(app)
+    assert ("set", "p1", "👤 Work") in calls
+    assert ("set", "p1", "42% 5h", "usage") in calls
+    assert all(call[1] == "p1" for call in calls)

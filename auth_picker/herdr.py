@@ -11,6 +11,7 @@ from auth_picker import paths, proc
 from auth_picker.errors import ProcessFailed
 
 BADGE_FIELD = "acct"
+USAGE_FIELD = "usage"
 TIMEOUT_S = 10.0
 
 
@@ -62,7 +63,7 @@ def focused_kind() -> str | None:
     return kind_of_agent({"agent": agent}) if isinstance(agent, str) else None
 
 
-def set_badge(pane_id: str, text: str) -> None:
+def set_badge(pane_id: str, text: str, field: str = BADGE_FIELD) -> None:
     _run(
         "pane",
         "report-metadata",
@@ -70,8 +71,24 @@ def set_badge(pane_id: str, text: str) -> None:
         "--source",
         paths.PLUGIN_ID,
         "--token",
-        f"{BADGE_FIELD}={text}",
+        f"{field}={text}",
     )
+
+
+def clear_badge(pane_id: str, field: str) -> None:
+    _run("pane", "report-metadata", pane_id, "--source", paths.PLUGIN_ID, "--clear-token", field)
+
+
+def event() -> dict[str, str]:
+    """The event a hook was started for: {"pane_id", "agent", "agent_status", ...}."""
+    try:
+        raw = json.loads(os.environ.get("HERDR_PLUGIN_EVENT_JSON") or "{}")
+    except ValueError:
+        return {}
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, str)}
 
 
 def notify(title: str, body: str = "") -> None:

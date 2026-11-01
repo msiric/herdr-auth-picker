@@ -262,3 +262,14 @@ def test_windows_are_named_by_length(seconds: int, label: str | None) -> None:
 def test_long_resets_read_in_days() -> None:
     reading = Reading(read_at=NOW, windows=[Window("monthly", 3.0, NOW + 30 * 86400)])
     assert summary(reading, NOW, 300) == "3% monthly, resets 30d00h"
+
+
+def test_compact_fits_a_sidebar_row() -> None:
+    from auth_picker.usage import compact  # noqa: PLC0415
+
+    reading = Reading(read_at=NOW, windows=[Window("session", 41.6, NOW + 7800)])
+    assert compact(reading, NOW, 300) == "42% 5h ↺2h10"
+    assert compact(reading, NOW + 3600, 300).startswith("~42%")
+    monthly = Reading(read_at=NOW, windows=[Window("monthly", 3.0, NOW + 29 * 86400 + 60)])
+    assert compact(monthly, NOW, 300) == "3% mo ↺29d"
+    assert compact(None, NOW, 300) == ""

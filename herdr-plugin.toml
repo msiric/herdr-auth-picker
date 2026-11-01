@@ -1,7 +1,7 @@
 id = "msiric.auth-picker"
 name = "Auth Picker"
 version = "1.1.0"
-min_herdr_version = "0.9.0"
+min_herdr_version = "0.9.1"
 description = "Switch Claude Code and Codex logins in herdr, without losing them."
 platforms = ["macos", "linux"]
 
@@ -12,6 +12,17 @@ platforms = ["macos", "linux"]
 # Finish or undo a switch a crash interrupted, then put the badge back on panes.
 [[startup]]
 command = ["/bin/sh", "bin/auth-picker", "recover"]
+
+# A new Claude/Codex pane gets its badge at once; when an agent finishes a
+# turn, its account's usage is re-read (if usage is on, at most once per
+# ttl_s) and the badges are refreshed. No background process.
+[[events]]
+on = "pane.agent_detected"
+command = ["/bin/sh", "bin/auth-picker", "event"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["/bin/sh", "bin/auth-picker", "event"]
 
 [[actions]]
 id = "open"

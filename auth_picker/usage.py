@@ -331,6 +331,29 @@ def retry_delay(value: str | None, now: float) -> float:
     return min(max(seconds, MIN_BACKOFF_S), MAX_BACKOFF_S)
 
 
+SHORT_LABELS = {"session": "5h", "weekly": "wk", "monthly": "mo"}
+
+
+def _left(seconds: int) -> str:
+    days, hours, minutes = seconds // 86400, (seconds % 86400) // 3600, (seconds % 3600) // 60
+    return f"{days}d" if days else f"{hours}h{minutes:02d}"
+
+
+def compact(reading: Reading | None, now: float, ttl_s: float) -> str:
+    """ "42% 5h ↺2h10": fits a sidebar row. "~" marks an old reading."""
+    if reading is None or not reading.windows:
+        return ""
+    window = next((w for w in reading.windows if w.label == "session"), reading.windows[0])
+    if window.percent is None:
+        return ""
+    stale = reading.read_at is None or now - reading.read_at > 2 * ttl_s
+    label = SHORT_LABELS.get(window.label, window.label)
+    text = f"{'~' if stale else ''}{round(window.percent)}% {label}"
+    if window.resets_at and window.resets_at > now:
+        text += f" ↺{_left(int(window.resets_at - now))}"
+    return text
+
+
 def summary(reading: Reading | None, now: float, ttl_s: float) -> str:
     """ "42% session, resets 2h10" (or "~42%" when old), for the picker and badge."""
     if reading is None or not reading.windows:

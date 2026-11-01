@@ -23,6 +23,7 @@ def _commands() -> list[list[str]]:
         *manifest.get("actions", []),
         *manifest.get("panes", []),
         *manifest.get("startup", []),
+        *manifest.get("events", []),
     ]
     return [entry["command"] for entry in entries]
 

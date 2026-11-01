@@ -343,6 +343,33 @@ def _cmd_usage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_event(args: argparse.Namespace) -> int:
+    """herdr's agent event hooks: badge new agent panes; read usage after a turn.
+
+    Runs on every agent status change in herdr, so anything that is not a
+    Claude or Codex pane returns before loading anything.
+    """
+    del args
+    event = herdr.event()
+    kind = herdr.kind_of_agent({"agent": event.get("agent", "")})
+    pane = event.get("pane_id")
+    if kind is None or not pane:
+        return 0
+    status = event.get("agent_status")
+    if status is not None and status != "idle":
+        return 0  # usage only moves when a turn ends
+    app = App.load()
+    if status == "idle" and app.usage is not None:
+        with contextlib.suppress(AuthPickerError):
+            live = app.backends[kind].read_live()
+            if live is not None:
+                app.usage.refresh(live)  # at most once per ttl_s, one process at a time
+        badge.stamp(app)
+    else:
+        badge.stamp(app, {pane})
+    return 0
+
+
 def _cmd_stamp(args: argparse.Namespace) -> int:
     badge.stamp(_app(args))
     return 0
@@ -516,6 +543,7 @@ def _maintenance_commands(commands: Commands) -> None:
     sub.add_argument("--yes", action="store_true")
     _add(commands, "recover", _cmd_recover, "finish or undo an interrupted switch (startup hook)")
     _add(commands, "stamp", _cmd_stamp, "refresh the account badge on agent panes")
+    _add(commands, "event", _cmd_event, "herdr's agent event hook (badge and usage)")
     sub = _add(
         commands, "usage", _cmd_usage, "how much of each account's allowance is used (opt-in)"
     )

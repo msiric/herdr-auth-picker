@@ -39,7 +39,7 @@ in [`docs/threat-model.md`](docs/threat-model.md).
 
 ## Requirements
 
-- herdr ≥ 0.9.0, Python ≥ 3.11 (found automatically, even when `python3` is
+- herdr ≥ 0.9.1, Python ≥ 3.11 (found automatically, even when `python3` is
   Apple's 3.9), macOS or Linux. No other dependencies.
 - Tested with **Claude Code 2.1.309** and **Codex 0.163.0**. Codex must use
   file storage (`cli_auth_credentials_store = "file"`, the default).
@@ -109,19 +109,38 @@ available only this way.
 
 ### The badge
 
-To show the account on each agent row in herdr's sidebar, add the `$acct`
-token. The plugin never edits your herdr config. The second row, beside the
-agent's name, has room for it; at the end of the first row it gets cut off.
+The plugin puts two tokens on every Claude and Codex pane: `$acct` (the
+account) and `$usage` (how much of it is used, when usage is on). herdr shows
+a token only where a sidebar row names it. The plugin never edits your herdr
+config, so add them yourself. Each on its own row, for Claude and Codex panes
+only, so they're never cut off and other agents keep their usual layout:
 
 ```toml
-[ui.sidebar.agents]
-rows = [["state_icon", "workspace", "tab"], ["agent", "$acct"]]
+[ui.sidebar.agents.rows_by_agent]
+claude = [["state_icon", "workspace", "tab"], ["agent", "$usage"], ["$acct"]]
+codex = [["state_icon", "workspace", "tab"], ["agent", "$usage"], ["$acct"]]
 ```
 
-Short profile names read best there (`bin/auth-picker rename claude
-mario.example work`), and `badge_format = "{label}"` drops the glyph.
+Then `herdr server reload-config`. A pane looks like this:
 
-Or show it once, in the tab bar. Use the directory `herdr plugin list` reports:
+```
+● Documents · Real estate
+claude  42% 5h ↺2h10
+👤 work
+```
+
+`42% 5h ↺2h10` means 42% of the five-hour window used, resetting in 2h10;
+`~` marks a reading older than twice `ttl_s`. `wk` and `mo` are the weekly and
+monthly windows. Short profile names read best (`bin/auth-picker rename
+claude mario.example work`); `badge_format = "{label}"` drops the glyph.
+
+A new Claude or Codex pane gets its badge as soon as herdr detects the agent.
+When an agent finishes a turn, the plugin re-reads that account's usage (at
+most once per `ttl_s`, only if usage is on) and refreshes the badges. There is
+no background process; herdr's agent events drive it.
+
+Or show both accounts once, in the tab bar. It reads only the cache, never the
+network or the Keychain:
 
 ```toml
 [ui]
@@ -130,9 +149,9 @@ tab_bar_right = [
 ]
 ```
 
-The badge reads no secrets and makes no network calls: Claude's account comes
-from its config file, not the Keychain. `name*` means a login no profile holds,
-and `!` means something needs attention (see `status`).
+With `badge_format = "{glyph} {label} {usage}"` it reads
+`Claude 👤 work 42% · Codex 👤 work 3%`. `name*` means a login no profile
+holds, and `!` means something needs attention (see `status`).
 
 ## Settings
 
@@ -143,8 +162,8 @@ bad values are errors that `status` reports, never silently ignored.
 |-----|---------|---------|
 | `notify` | `true` | herdr notification when an action switches, saves or fails |
 | `notify_identity` | `false` | include the email and plan in those notifications |
-| `badge` | `true` | stamp `$acct` on agent panes |
-| `badge_format` | `"{glyph} {label}"` | any of `{glyph}`, `{label}`, `{kind}`, `{usage}` |
+| `badge` | `true` | stamp `$acct` and `$usage` on Claude and Codex panes |
+| `badge_format` | `"{glyph} {label}"` | the `$acct` text, from `{glyph}`, `{label}`, `{kind}`, `{usage}` |
 | `glyph` | `"👤"` | the badge character |
 | `lock_timeout_s` | `5` | how long to wait for another switch, or for Claude's own locks |
 | `codex_restart` | `"ask"` | after a Codex switch, restart Codex's background server: `ask` (the picker and a terminal ask; actions only tell you), `always`, or `never` |
