@@ -1,3 +1,3 @@
 """Switch Claude Code and Codex logins in herdr, without losing them."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0rc1"

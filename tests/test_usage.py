@@ -247,3 +247,18 @@ def test_summary_marks_old_readings() -> None:
     assert summary(fresh, NOW, 300) == "42% session, resets 2h10"
     assert summary(fresh, NOW + 3600, 300).startswith("~42%")
     assert summary(None, NOW, 300) == ""
+
+
+@pytest.mark.parametrize(
+    ("seconds", "label"),
+    [(18000, "session"), (604800, "weekly"), (2592000, "monthly"), (1209600, "14d"), (0, None)],
+)
+def test_windows_are_named_by_length(seconds: int, label: str | None) -> None:
+    from auth_picker.usage import window_label  # noqa: PLC0415
+
+    assert window_label(seconds) == label
+
+
+def test_long_resets_read_in_days() -> None:
+    reading = Reading(read_at=NOW, windows=[Window("monthly", 3.0, NOW + 30 * 86400)])
+    assert summary(reading, NOW, 300) == "3% monthly, resets 30d00h"

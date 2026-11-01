@@ -73,3 +73,18 @@ Touches: the Claude Keychain item and `oauthAccount` in `~/.claude.json`.
 
 When 1–6 pass (7 optional), record the results in docs/design.md §11, update
 the README status, and tag `v1.0.0`.
+
+## Results (2026-11-01, macOS 26.7.1, Claude Code 2.1.309 CLI with 2.1.303 sessions running, Codex 0.163.0)
+
+| step | result |
+|------|--------|
+| 1 baseline | pass |
+| 2 save | pass, after two fixes it found: Keychain writes over about 4 KB were truncated by `security -i` (now split into parts, and oversize writes refused); a damaged item could not be deleted. The read-back check meant nothing was lost. |
+| 3 second Claude account | pass; the out-of-band `/login` was reported as such |
+| 4 and 5 Claude switch and undo | pass: a fresh `claude` and `status` agreed each time; `~/.claude.json` kept all 106 other keys; no lock left behind. Five sessions were running throughout (step 4's "none running" was not possible). It also found the session scan counting processes that only mentioned Claude's npm package. |
+| V5 | partly verified: a running session's `/status` account and account-scoped settings followed the switch and the undo. Billing not confirmed by a request. |
+| 6 / V4 Codex | not run: no second Codex account |
+| 7 / V7 usage | pass: both providers answered the honest User-Agent; it found a 30-day window labelled "weekly" (fixed) |
+| 8 recovery drill | skipped on purpose with five live sessions; covered by tests |
+
+Tagged `v1.0.0-rc.1`. Promote to `v1.0.0` once V4 and V5 billing are confirmed.

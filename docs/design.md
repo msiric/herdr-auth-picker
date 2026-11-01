@@ -377,6 +377,7 @@ auto-commits or auto-restores a value the plugin didn't write.
 | Codex store mode enum `file` (default) / `keyring` / `auto` / `ephemeral` | `openai/codex` `config/src/types.rs` |
 | Codex serializes credential commits with an flock on `<auth.json>.lock`, and has compare-and-save | `openai/codex` `login/src/auth/storage_commit.rs` (main) |
 | Anthropic: developers "may not collect, store, or intermediate Claude.ai credentials or session tokens" | code.claude.com legal-and-compliance |
+| `security -i` runs commands longer than about 4,090 characters in pieces, storing a truncated value; the `-w` prompt silently keeps only 128 characters | reproduced on throwaway and dummy items (found by the end-to-end run) |
 
 ## 11. To verify in later phases
 
@@ -385,10 +386,10 @@ auto-commits or auto-restores a value the plugin didn't write.
 | V1 | ~~Does Claude lock `~/.claude.json`?~~ **Yes**, plus a refresh lock and a storage-write lock (§3). | 4 ✔ |
 | V2 | ~~`trustedDeviceToken` scope?~~ **Account-scoped** (§3). | 4 ✔ |
 | V3 | ~~Codex 0.163.0 lock?~~ **No.** It writes in place, without a lock (§3). | 4 ✔ |
-| V4 | Does a running Codex follow an `auth.json` swap, and does it write back after refresh? | 6 |
-| V5 | Does a running Claude 2.1.309 follow a Keychain swap (`.credentials.json` absent here)? Isolated `CLAUDE_CONFIG_DIR`, dummy refresh tokens. | 6 |
+| V4 | Does a running Codex follow an `auth.json` swap, and does it write back after refresh? **Not verified** (no second Codex account). | 10 |
+| V5 | ~~Does a running Claude session follow a Keychain swap?~~ **Partly ✔** (2026-11-01): a running 2.1.303 session's `/status` account and account-scoped settings followed a switch and an undo, with `.credentials.json` absent. Billing to the new account not confirmed by a request. | 10 |
 | V6 | ~~herdr working directory and state dir?~~ The working directory is the plugin root; state is `~/.local/state/herdr/plugins/<id>` (0755, which we tighten), and config is `~/.config/herdr/plugins/config/<id>`. | 7 ✔ |
-| V7 | Do the usage endpoints accept an honest User-Agent? If not, that provider has no usage, and we don't spoof. | 9 |
+| V7 | ~~Do the usage endpoints accept an honest User-Agent?~~ **Yes** (2026-11-01): both answered with usage for `msiric-auth-picker/0.1.0`. | 10 ✔ |
 | V8 | Linux paths/behaviour: CI only, as there is no Linux machine here. | 4/10 |
 
 ## 12. Testing

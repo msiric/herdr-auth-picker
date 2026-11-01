@@ -4,8 +4,9 @@ Switch which Claude Code or Codex account is logged in, from inside
 [herdr](https://herdr.dev), without logging out and back in, and without
 losing a login along the way.
 
-> **Status: pre-release.** It's complete and tested, but not yet checked
-> end-to-end against real accounts. See [`docs/e2e-checklist.md`](docs/e2e-checklist.md).
+> **Status: release candidate (`v1.0.0-rc.1`).** Verified end to end with real
+> Claude accounts. Running Codex sessions are not yet verified. See the results in
+> [`docs/e2e-checklist.md`](docs/e2e-checklist.md#results-2026-11-01-macos-2671-claude-code-21309-cli-with-21303-sessions-running-codex-01630).
 
 It replaces [`rcosteira79/herdr-account-switch`](https://github.com/rcosteira79/herdr-account-switch),
 which this project audited and rebuilt. The audit found no malicious code, but

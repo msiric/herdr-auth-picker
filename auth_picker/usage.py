@@ -149,6 +149,20 @@ def parse_claude(body: Any, now: float) -> list[Window]:
     return windows
 
 
+def window_label(seconds: float) -> str | None:
+    """Name a window by its length: session, weekly, monthly, or N days."""
+    days = seconds / 86400
+    if not seconds:
+        return None
+    if days < 1:
+        return "session"
+    if 6 <= days <= 8:  # noqa: PLR2004 - "about a week"
+        return "weekly"
+    if 28 <= days <= 31:  # noqa: PLR2004 - "about a month"
+        return "monthly"
+    return f"{round(days)}d"
+
+
 def parse_codex(body: Any, now: float) -> list[Window]:
     rate = body.get("rate_limit") if isinstance(body, dict) else None
     windows: list[Window] = []
@@ -158,8 +172,7 @@ def parse_codex(body: Any, now: float) -> list[Window]:
         block = rate.get(name)
         if not isinstance(block, dict):
             continue
-        seconds = _number(block.get("limit_window_seconds")) or 0
-        label = "weekly" if seconds >= 6 * 86400 else "session" if seconds else name.split("_")[0]
+        label = window_label(_number(block.get("limit_window_seconds")) or 0) or name.split("_")[0]
         resets = _when(block.get("reset_at"))
         after = _number(block.get("reset_after_seconds"))
         if resets is None and after is not None:
@@ -329,5 +342,6 @@ def summary(reading: Reading | None, now: float, ttl_s: float) -> str:
     text = f"{'~' if stale else ''}{round(window.percent)}% {window.label}"
     if window.resets_at and window.resets_at > now:
         left = int(window.resets_at - now)
-        text += f", resets {left // 3600}h{(left % 3600) // 60:02d}"
+        days, hours, minutes = left // 86400, (left % 86400) // 3600, (left % 3600) // 60
+        text += f", resets {days}d{hours:02d}h" if days else f", resets {hours}h{minutes:02d}"
     return text
