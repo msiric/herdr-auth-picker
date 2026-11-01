@@ -122,3 +122,21 @@ def test_a_stopped_switch_shows_in_status_and_rescue(
     assert run(capsys, "rescue", "--clear", rid)[0] == 1
     assert run(capsys, "rescue", "--clear", rid, "--yes")[0] == 0
     assert world.journals.rescues() == []
+
+
+def test_cleanup_removes_only_unreferenced_secrets(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    world.log_in("alice")
+    world.save("A", "alice")
+    world.profiles.store.put(
+        "profile:00000000-0000-4000-8000-000000000000",
+        world.profiles.store.get(world.profiles.find("claude", "A").key)
+        or pytest.fail("no secret"),
+    )
+    code, text = run(capsys, "cleanup")
+    assert code == 1
+    assert "would delete profile:00000000-0000-4000-8000-000000000000" in text
+    assert run(capsys, "cleanup", "--yes")[0] == 0
+    assert world.profiles.orphans() == []
+    assert world.profiles.secret(world.profiles.find("claude", "A"))

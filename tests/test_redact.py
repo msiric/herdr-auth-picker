@@ -49,3 +49,8 @@ def test_sensitive_refuses_pickling_and_hashing() -> None:
 def test_sensitive_equality() -> None:
     assert Sensitive(b"a") == Sensitive(b"a")
     assert Sensitive(b"a") != Sensitive(b"b")
+
+
+def test_uuids_are_ids_not_secrets() -> None:
+    text = "unreferenced saved secret profile:2f1c9a7e-5b3d-4c8e-9f10-112233445566"
+    assert redact(text) == text

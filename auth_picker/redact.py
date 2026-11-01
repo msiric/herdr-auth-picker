@@ -29,8 +29,13 @@ _PATTERNS = (
 _OPAQUE = re.compile(r"[A-Za-z0-9_\-+=]{32,}")
 
 
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
 def _mask_opaque(match: re.Match[str]) -> str:
     run = match.group(0)
+    if _UUID.fullmatch(run):  # ids, not secrets
+        return run
     has_digit = any(c.isdigit() for c in run)
     has_alpha = any(c.isalpha() for c in run)
     return "[REDACTED]" if has_digit and has_alpha else run

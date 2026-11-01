@@ -117,3 +117,77 @@ def test_foreign_item_in_unexpected_format_is_an_error(keychain: KeychainStore) 
     )
     with pytest.raises(KeychainError):
         keychain.get("profile:a")
+
+
+@on_macos
+def test_large_values_are_split_into_commands_that_fit(
+    keychain: KeychainStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from auth_picker.secretstore.keychain import MAX_COMMAND_BYTES  # noqa: PLC0415
+
+    sizes: list[int] = []
+    real_run = proc.run
+
+    def recording_run(argv: Sequence[str], **kwargs: Any) -> proc.Result:
+        if kwargs.get("input") is not None:
+            sizes.append(len(kwargs["input"]))
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(proc, "run", recording_run)
+    big = Sensitive(os.urandom(10_000))
+    keychain.put("profile:big", big)
+    assert keychain.get("profile:big") == big
+    assert sizes
+    assert max(sizes) <= MAX_COMMAND_BYTES
+    assert keychain.keys() == ["profile:big"]  # parts stay out of sight
+
+    smaller = Sensitive(b"x" * 3000)
+    keychain.put("profile:big", smaller)
+    assert keychain.get("profile:big") == smaller
+    assert keychain.delete("profile:big")
+    raw = subprocess.run(
+        [SECURITY, "dump-keychain", keychain.keychain or ""], capture_output=True, check=True
+    ).stdout
+    assert keychain.service.encode() not in raw  # every part went with it
+
+
+@on_macos
+def test_an_oversized_write_is_refused_before_anything_runs(
+    keychain: KeychainStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Sequence[str]] = []
+    monkeypatch.setattr(proc, "run", lambda argv, **_k: calls.append(argv))
+    with pytest.raises(KeychainError, match="too large"):
+        write_password(keychain.service, "x", Sensitive(b"y" * 3000), keychain.keychain)
+    assert calls == []
+
+
+@on_macos
+def test_a_crash_before_the_manifest_keeps_the_old_value(
+    keychain: KeychainStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = Sensitive(os.urandom(5000))
+    keychain.put("profile:a", old)
+    real = KeychainStore._put_raw
+
+    def crash_on_manifest(self: KeychainStore, account: str, data: bytes) -> None:
+        if account == "profile:a":
+            raise OSError("power cut")
+        real(self, account, data)
+
+    monkeypatch.setattr(KeychainStore, "_put_raw", crash_on_manifest)
+    with pytest.raises(OSError, match="power cut"):
+        keychain.put("profile:a", Sensitive(os.urandom(5000)))
+    monkeypatch.undo()
+    assert keychain.get("profile:a") == old
+
+
+@on_macos
+def test_values_stored_whole_by_earlier_versions_still_read(keychain: KeychainStore) -> None:
+    write_password(
+        keychain.service,
+        "profile:old",
+        Sensitive(base64.b64encode(b'{"schema":1}')),
+        keychain=keychain.keychain,
+    )
+    assert keychain.get("profile:old") == Sensitive(b'{"schema":1}')

@@ -182,6 +182,23 @@ def _cmd_rescue(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_cleanup(args: argparse.Namespace) -> int:
+    app = _app(args)
+    with app.profiles.locked():
+        orphans = app.profiles.orphans()
+        if not orphans:
+            out("nothing to clean up")
+            return 0
+        for key in orphans:
+            out(f"{'deleting' if args.yes else 'would delete'} {key} (no profile refers to it)")
+        if not args.yes:
+            out("run again with --yes to delete them")
+            return 1
+        for key in orphans:
+            app.store.delete(key)
+    return 0
+
+
 def _cmd_recover(args: argparse.Namespace) -> int:
     app = _app(args)
     for kind in KINDS:
@@ -296,7 +313,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     for kind in KINDS:
         _status_kind(app, kind)
     for orphan in app.profiles.orphans():
-        out(f"note: unreferenced saved secret {orphan} (left by an interrupted save)")
+        out(
+            f"note: unreferenced saved secret {orphan} (left by an interrupted save; see `cleanup`)"
+        )
     return 0
 
 
@@ -383,6 +402,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--yes", action="store_true")
     sub = add("rescue", _cmd_rescue, "review or clear a stopped switch")
     sub.add_argument("--clear", metavar="ID")
+    sub.add_argument("--yes", action="store_true")
+    sub = add("cleanup", _cmd_cleanup, "delete saved secrets no profile refers to")
     sub.add_argument("--yes", action="store_true")
     add("recover", _cmd_recover, "finish or undo an interrupted switch (startup hook)")
     add("stamp", _cmd_stamp, "refresh the account badge on agent panes")
