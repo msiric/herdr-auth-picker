@@ -30,6 +30,3 @@ files = ["auth_picker", "main.py", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
-markers = [
-    "keychain: touches the real macOS login keychain (dummy items only); opt in with AUTH_PICKER_KEYCHAIN_TESTS=1",
-]
