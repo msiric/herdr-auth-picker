@@ -52,8 +52,11 @@ def _boolean(value: Any) -> bool:
 
 def _number(low: float, high: float, integer: bool = False) -> Validator:
     def check(value: Any) -> Any:
-        kinds: tuple[type, ...] = (int,) if integer else (int, float)
-        if isinstance(value, bool) or not isinstance(value, kinds):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or (integer and not isinstance(value, int))
+        ):
             raise ValueError("must be a whole number" if integer else "must be a number")
         if not low <= value <= high:
             raise ValueError(f"must be between {low:g} and {high:g}")

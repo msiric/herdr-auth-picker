@@ -44,7 +44,7 @@ def test_failed_private_write_keeps_the_old_file_and_no_temp(
     def boom(*_args: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(fsutil.os, "replace", boom)
+    monkeypatch.setattr("os.replace", boom)
     with pytest.raises(OSError, match="disk full"):
         fsutil.write_private(str(target), b"new")
     assert target.read_bytes() == b"old"
