@@ -208,6 +208,19 @@ def _cmd_badge(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from auth_picker.ui.picker import run  # noqa: PLC0415 - curses only when drawing
+
+    return run(_app(args))
+
+
+def _cmd_open(args: argparse.Namespace) -> int:
+    badge.stamp(_app(args))
+    if not herdr.open_pane("picker"):
+        raise AuthPickerError("open", "herdr could not open the picker")
+    return 0
+
+
 def _cmd_stamp(args: argparse.Namespace) -> int:
     badge.stamp(_app(args))
     return 0
@@ -315,6 +328,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("kind", choices=KINDS, nargs=None if required else "?")
 
     add("status", _cmd_status, "show what is logged in, saved, and needs attention")
+    add("ui", _cmd_ui, "the account picker (herdr runs this in an overlay)")
+    add("open", _cmd_open, "open the account picker in herdr")
     sub = add("save", _cmd_save, "save the live login(s) as a profile")
     kind(sub)
     sub.add_argument("--name", help="what to call it (default: from the account)")

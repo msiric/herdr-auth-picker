@@ -14,6 +14,12 @@ platforms = ["macos", "linux"]
 command = ["python3", "-I", "main.py", "recover"]
 
 [[actions]]
+id = "open"
+title = "Auth Picker: open"
+contexts = ["global", "pane"]
+command = ["python3", "-I", "main.py", "open"]
+
+[[actions]]
 id = "next"
 title = "Auth Picker: switch to the next account"
 contexts = ["global", "pane"]
@@ -42,3 +48,9 @@ id = "status"
 title = "Auth Picker: status"
 contexts = ["global"]
 command = ["python3", "-I", "main.py", "status"]
+
+[[panes]]
+id = "picker"
+title = "Accounts"
+command = ["python3", "-I", "main.py", "ui"]
+placement = "overlay"
