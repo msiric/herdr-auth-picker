@@ -191,3 +191,12 @@ def test_values_stored_whole_by_earlier_versions_still_read(keychain: KeychainSt
         keychain=keychain.keychain,
     )
     assert keychain.get("profile:old") == Sensitive(b'{"schema":1}')
+
+
+@on_macos
+def test_a_damaged_item_can_still_be_deleted(keychain: KeychainStore) -> None:
+    write_password(
+        keychain.service, "profile:bad", Sensitive(b"not base64!"), keychain=keychain.keychain
+    )
+    assert keychain.delete("profile:bad")
+    assert keychain.keys() == []

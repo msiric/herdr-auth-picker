@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import hashlib
 import json
 import re
@@ -145,7 +146,10 @@ class KeychainStore:
         return True
 
     def delete(self, key: str) -> bool:
-        _, manifest = self._manifest(check_key(key))
+        manifest = None
+        # A damaged item (for one, a truncated write) must still be deletable.
+        with contextlib.suppress(KeychainError):
+            _, manifest = self._manifest(check_key(key))
         existed = self._delete_account(key)
         if manifest is not None:
             self._delete_parts(key, manifest)
