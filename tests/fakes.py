@@ -8,6 +8,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+from auth_picker.backends.base import canonical
+from auth_picker.backends.claude import ClaudeBackend, FileCredential, resolve_paths
+from auth_picker.backends.codex import CodexBackend
+
+# Fixed per test run, so the same fake login is byte-identical every time.
+NOW = int(time.time())
+
 
 def jwt(claims: dict[str, Any]) -> str:
     def part(obj: dict[str, Any]) -> str:
@@ -17,7 +24,7 @@ def jwt(claims: dict[str, Any]) -> str:
 
 
 def claude_blob(who: str, generation: int = 1, **machine: Any) -> dict[str, Any]:
-    now_ms = int(time.time() * 1000)
+    now_ms = NOW * 1000
     return {
         "claudeAiOauth": {
             "accessToken": f"sk-ant-oat01-{who}-access-{generation}",
@@ -63,9 +70,31 @@ def codex_auth(who: str, generation: int = 1, workspace: str | None = None) -> d
         "OPENAI_API_KEY": None,
         "tokens": {
             "id_token": jwt(id_claims),
-            "access_token": jwt({"exp": int(time.time()) + 3600, "g": generation}),
+            "access_token": jwt({"exp": NOW + 3600, "g": generation}),
             "refresh_token": f"rt_{who}_{generation}",
             "account_id": account,
         },
         "last_refresh": "2026-10-28T18:36:53.123456Z",
+    }
+
+
+def claude_secret(who: str, generation: int = 1) -> bytes:
+    blob = claude_blob(who, generation)
+    return canonical(
+        {"schema": 1, "kind": "claude", "credentials": blob, "oauth_account": claude_account(who)}
+    )
+
+
+def codex_secret(who: str, generation: int = 1) -> bytes:
+    return canonical({"schema": 1, "kind": "codex", "auth": codex_auth(who, generation)})
+
+
+def make_backends(root: Path) -> dict[str, Any]:
+    (root / "home" / ".claude").mkdir(parents=True, exist_ok=True)
+    (root / "home" / ".codex").mkdir(parents=True, exist_ok=True)
+    write_claude_config(root / "home" / ".claude.json", None)
+    paths = resolve_paths({"HOME": str(root / "home"), "USER": "alice"})
+    return {
+        "claude": ClaudeBackend(paths, store=FileCredential(paths.credentials_file)),
+        "codex": CodexBackend(str(root / "home" / ".codex")),
     }
