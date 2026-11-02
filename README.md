@@ -76,30 +76,40 @@ Then add your other accounts:
 
 ## Use
 
-| from herdr | does |
-|------------|------|
-| action `open` | the picker: `enter` switch, `s` save, `r` rename, `x` delete, `u` undo, `q` quit |
-| action `next` | switch the focused agent's kind to its next saved account |
-| action `undo` | switch back to the account before the last switch |
-| action `save` | save every login that is live now |
-| action `sync` | update the live login's saved copy (after you `/login` again) |
-| action `status` | what is live, what is saved, anything needing attention |
-
-Keybindings (`~/.config/herdr/config.toml`, then `herdr server reload-config`):
+herdr has no menu for plugin actions: you run them from keys you bind. Add
+these to `~/.config/herdr/config.toml`, then `herdr server reload-config`.
+`prefix` is `ctrl+b` unless you changed it, so `prefix+a` means ctrl+b, let go,
+then a. `prefix+?` lists every binding.
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
-command = "msiric.auth-picker.next"
-description = "next account"
+command = "msiric.auth-picker.open"
+description = "accounts: picker"
 
 [[keys.command]]
 key = "prefix+shift+a"
 type = "plugin_action"
-command = "msiric.auth-picker.open"
-description = "account picker"
+command = "msiric.auth-picker.next"
+description = "accounts: next"
+
+[[keys.command]]
+key = "prefix+u"
+type = "plugin_action"
+command = "msiric.auth-picker.undo"
+description = "accounts: switch back"
 ```
+
+| key | action | does |
+|-----|--------|------|
+| `prefix+a` | `open` | the picker: `j`/`k` move, `enter` switch, `s` save, `r` rename, `x` delete, `u` undo, `q` close |
+| `prefix+shift+a` | `next` | switch the focused pane's tool (Claude or Codex) to its next saved account |
+| `prefix+u` | `undo` | switch back to the account you were on before the last switch; press again to toggle back |
+
+The other actions, `save` (save every login that is live now), `sync` (update
+the live login's saved copy) and `status`, can be bound the same way, or run
+from a shell: `herdr plugin action invoke msiric.auth-picker.save`.
 
 Every action is also a command: `bin/auth-picker` in the plugin directory
 finds a Python 3.11 or newer for you (set `AUTH_PICKER_PYTHON` to choose one).
