@@ -37,11 +37,14 @@ def real_herdr_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_calls_go_to_herdr_with_plain_argv(real_herdr_binary: Path) -> None:
-    herdr.set_badge("p1", "👤 work")
+    herdr.report("p1", {"acct": "👤 work"}, ("usage",))
     herdr.notify("Claude Code: work", "switched")
     assert herdr.agents()[0]["pane_id"] == "p1"
     calls = real_herdr_binary.read_text().splitlines()
-    assert calls[0] == "pane report-metadata p1 --source msiric.auth-picker --token acct=👤 work"
+    assert calls[0] == (
+        "pane report-metadata p1 --source msiric.auth-picker --token acct=👤 work "
+        "--clear-token usage"
+    )
     assert calls[1] == "notification show Claude Code: work --sound none --body switched"
 
 

@@ -64,3 +64,26 @@ def test_launcher_refuses_a_bad_explicit_python(tmp_path: Path, given: str) -> N
     result = _run(["/bin/sh", LAUNCHER, "--version"], env=env)
     assert result.returncode == 2
     assert "AUTH_PICKER_PYTHON" in result.stderr
+
+
+def test_launcher_drops_other_agents_events_before_starting_python(tmp_path: Path) -> None:
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "AUTH_PICKER_PYTHON": str(_fake_python(tmp_path / "old")),  # would fail if reached
+        "HERDR_PLUGIN_EVENT_JSON": '{"data":{"pane_id":"p","agent":"copilot"}}',
+    }
+    assert _run(["/bin/sh", LAUNCHER, "event"], env=env).returncode == 0
+    env["HERDR_PLUGIN_EVENT_JSON"] = '{"data":{"pane_id":"p","agent":"claude"}}'
+    assert _run(["/bin/sh", LAUNCHER, "event"], env=env).returncode == 2
+
+
+def test_launcher_does_not_start_a_versioned_python_just_to_check_it(tmp_path: Path) -> None:
+    log = tmp_path / "calls"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    wrapper = bindir / "python3.14"  # the first name the launcher looks for
+    wrapper.write_text(f'#!/bin/sh\necho "$*" >> "{log}"\nexec "{sys.executable}" "$@"\n')
+    wrapper.chmod(0o755)
+    result = _run(["/bin/sh", LAUNCHER, "--version"], env={"PATH": f"{bindir}:/usr/bin:/bin"})
+    assert result.returncode == 0, result.stderr
+    assert log.read_text().splitlines() == [f"-I {ROOT / 'bin' / '..' / 'main.py'} --version"]

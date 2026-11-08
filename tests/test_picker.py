@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -180,3 +181,38 @@ def test_the_picker_asks_before_restarting_codex(
     picker.handle("enter")
     assert asked[-1].startswith("Restart Codex's background server")
     assert bool(calls) is yes
+
+
+def test_a_slow_usage_read_never_holds_up_the_picker(world: World) -> None:
+    import threading  # noqa: PLC0415
+
+    from auth_picker.usage import Reading, Usage  # noqa: PLC0415
+
+    release = threading.Event()
+
+    class SlowUsage(Usage):
+        def refresh(self, snapshot: object) -> Reading:
+            del snapshot
+            release.wait(5)
+            return Reading()
+
+    picker = _picker(world, Answers())
+    picker.app.usage = SlowUsage(str(world.root / "state"), 300)
+    started = time.monotonic()
+    picker.refresh_usage_soon()
+    picker.rows()
+    assert time.monotonic() - started < 0.5
+    assert picker.busy
+    release.set()
+    picker.finish()
+    assert not picker.busy
+
+
+def test_switching_shows_progress_first(world: World) -> None:
+    shown: list[str] = []
+    answers = Answers()
+    picker = Picker(_picker(world, answers).app, answers.ask, answers.confirm, shown.append)
+    _select(picker, "B")
+    picker.handle("enter")
+    assert shown == ["switching to B…"]
+    assert picker.message.startswith("switched to B")

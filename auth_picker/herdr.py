@@ -63,20 +63,24 @@ def focused_kind() -> str | None:
     return kind_of_agent({"agent": agent}) if isinstance(agent, str) else None
 
 
-def set_badge(pane_id: str, text: str, field: str = BADGE_FIELD) -> None:
-    _run(
-        "pane",
-        "report-metadata",
-        pane_id,
-        "--source",
-        paths.PLUGIN_ID,
-        "--token",
-        f"{field}={text}",
-    )
+def report(pane_id: str, tokens: dict[str, str], clear: tuple[str, ...] = ()) -> None:
+    """Set and clear this plugin's tokens on one pane, in one herdr call."""
+    args = ["pane", "report-metadata", pane_id, "--source", paths.PLUGIN_ID]
+    for name, value in tokens.items():
+        args += ["--token", f"{name}={value}"]
+    for name in clear:
+        args += ["--clear-token", name]
+    if tokens or clear:
+        _run(*args)
 
 
-def clear_badge(pane_id: str, field: str) -> None:
-    _run("pane", "report-metadata", pane_id, "--source", paths.PLUGIN_ID, "--clear-token", field)
+def stamp_soon() -> bool:
+    """Have herdr refresh the badges in the background (the `stamp` action).
+
+    herdr runs and tracks it, so nothing outlives us and nobody waits for it.
+    """
+    result = _run("plugin", "action", "invoke", f"{paths.PLUGIN_ID}.stamp")
+    return result is not None and result.ok
 
 
 def event() -> dict[str, str]:

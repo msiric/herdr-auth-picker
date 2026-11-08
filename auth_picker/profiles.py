@@ -11,6 +11,7 @@ in reverse: index first, then secrets.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -60,6 +61,10 @@ class Profile:
     refresh_hash: str
     prev_cred_hash: str | None = None
     prev_refresh_hash: str | None = None
+    # SHA-256 of the whole saved login. Equal to a snapshot's secret_hash means
+    # the saved copy is byte-for-byte that login. None for profiles saved
+    # before 1.3.0, until their next update.
+    secret_hash: str | None = None
 
     @property
     def key(self) -> str:
@@ -79,6 +84,10 @@ class Profile:
             (cred_hash and cred_hash in (self.cred_hash, self.prev_cred_hash))
             or (refresh_hash and refresh_hash in (self.refresh_hash, self.prev_refresh_hash))
         )
+
+
+def secret_hash(snapshot: Snapshot) -> str:
+    return hashlib.sha256(snapshot.secret.reveal()).hexdigest()
 
 
 def check_label(label: str) -> str:
@@ -136,13 +145,14 @@ def _parse_entry(raw: Any) -> Profile:
         refresh_hash=raw["refresh_hash"],
         prev_cred_hash=raw.get("prev_cred_hash"),
         prev_refresh_hash=raw.get("prev_refresh_hash"),
+        secret_hash=raw.get("secret_hash"),
     )
     if profile.kind not in KINDS:
         raise ValueError("unknown kind")
     for name in ("fingerprint", "cred_hash", "refresh_hash"):
         if not _HEX64.fullmatch(getattr(profile, name)):
             raise ValueError(f"bad {name}")
-    for name in ("prev_cred_hash", "prev_refresh_hash"):
+    for name in ("prev_cred_hash", "prev_refresh_hash", "secret_hash"):
         value = getattr(profile, name)
         if value is not None and not (isinstance(value, str) and _HEX64.fullmatch(value)):
             raise ValueError(f"bad {name}")
@@ -267,19 +277,36 @@ class Profiles:
                 refresh_expires_at=snapshot.refresh_expires_at,
                 cred_hash=snapshot.cred_hash,
                 refresh_hash=snapshot.refresh_hash,
+                secret_hash=secret_hash(snapshot),
             )
             self.store.put(profile.key, snapshot.secret)
             self._write([*self.all(), profile])
             return profile
 
     def update_secret(self, profile: Profile, snapshot: Snapshot) -> Profile:
-        """Store a newer generation of the same login, keeping the one before it."""
+        """Store a newer generation of the same login, keeping the one before it.
+
+        Afterwards the profile holds exactly ``snapshot``. When only the account
+        details around the same tokens changed (Claude refreshes those), the
+        saved copy is overwritten in place and the previous generation is kept.
+        """
         if snapshot.fingerprint != profile.fingerprint or snapshot.kind != profile.kind:
             raise ProfileError("identity", f"that login is not {profile.label}'s account")
         with self.locked():
             current = self.get(profile.id)
-            if snapshot.cred_hash == current.cred_hash:
+            new_hash = secret_hash(snapshot)
+            if current.secret_hash == new_hash:
                 return current
+            if snapshot.cred_hash == current.cred_hash:
+                self.store.put(current.key, snapshot.secret)
+                same_tokens = replace(
+                    current,
+                    identity=snapshot.identity,
+                    updated_at=self.clock(),
+                    secret_hash=new_hash,
+                )
+                self._replace(same_tokens)
+                return same_tokens
             previous = self.store.get(current.key)
             if previous is not None:
                 self.store.put(current.prev_key, previous)
@@ -293,6 +320,7 @@ class Profiles:
                 refresh_hash=snapshot.refresh_hash,
                 prev_cred_hash=current.cred_hash if previous is not None else None,
                 prev_refresh_hash=current.refresh_hash if previous is not None else None,
+                secret_hash=new_hash,
             )
             self._replace(updated)
             return updated
@@ -336,6 +364,7 @@ class Profiles:
                 refresh_hash=older[1].refresh_hash,
                 prev_cred_hash=current.cred_hash,
                 prev_refresh_hash=current.refresh_hash,
+                secret_hash=secret_hash(older[1]),
             )
             self._replace(updated)
             self.store.delete(current.swap_key)

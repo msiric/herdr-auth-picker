@@ -21,16 +21,16 @@ import fcntl
 import json
 import math
 import os
-import ssl
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:  # the network modules load only when a read actually happens
+    import ssl
+    import urllib.request
 
 from auth_picker import __version__
 from auth_picker.backends.base import Snapshot, secret_object
@@ -73,6 +73,9 @@ class Reading:
 
 def build_opener(context: ssl.SSLContext | None = None) -> urllib.request.OpenerDirector:
     """An opener that can do HTTPS and nothing else: no redirects, no proxies."""
+    import ssl  # noqa: PLC0415 - ~30 ms of imports, needed only when reading usage
+    import urllib.request  # noqa: PLC0415
+
     opener = urllib.request.OpenerDirector()
     opener.add_handler(urllib.request.HTTPSHandler(context=context or ssl.create_default_context()))
     opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
@@ -90,6 +93,9 @@ def request(
     """One GET. Returns (status, headers, body) for any HTTP answer."""
     if urlsplit(url).scheme != "https":
         raise UsageError("scheme", "usage is only ever read over https")
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
     # The scheme is checked above, and this opener has no file/ftp/data handlers.
     req = urllib.request.Request(url, headers=dict(headers), method="GET")  # noqa: S310
     try:
@@ -325,6 +331,8 @@ def retry_delay(value: str | None, now: float) -> float:
             seconds = float(value)
         except ValueError:
             with contextlib.suppress(TypeError, ValueError):
+                from email.utils import parsedate_to_datetime  # noqa: PLC0415
+
                 seconds = parsedate_to_datetime(value).timestamp() - now
     if seconds is None or math.isnan(seconds):
         return DEFAULT_BACKOFF_S

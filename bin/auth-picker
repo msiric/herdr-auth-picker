@@ -3,10 +3,19 @@
 # happens to be. Many Macs still have Apple's Python 3.9 as `python3`.
 #
 # Tries, in order: $AUTH_PICKER_PYTHON (an absolute path), python3.14 down to
-# python3.11, then python3, on PATH and in Homebrew's usual places. Runs the
-# first that is 3.11 or newer in isolated mode (-I), so the environment
+# python3.11, then python3 (only if it is 3.11 or newer), on PATH and in
+# Homebrew's usual places. Runs it in isolated mode (-I), so the environment
 # cannot substitute modules.
 set -u
+
+# herdr runs `event` on every agent status change, for every agent. Drop the
+# ones that are not Claude or Codex here, before paying for a Python start.
+if [ "${1:-}" = event ]; then
+    case "${HERDR_PLUGIN_EVENT_JSON:-}" in
+        *'"agent":"claude"'* | *'"agent":"codex"'*) ;;
+        *) exit 0 ;;
+    esac
+fi
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 70
 main="$here/../main.py"
@@ -27,13 +36,20 @@ if [ -n "${AUTH_PICKER_PYTHON:-}" ]; then
     exit 2
 fi
 
-for name in python3.14 python3.13 python3.12 python3.11 python3; do
+# A versioned name says its version, so it is used without starting it to
+# check (that check costs a whole Python start). Only plain python3 is probed.
+for name in python3.14 python3.13 python3.12 python3.11; do
     for candidate in $(command -v "$name" 2>/dev/null) \
         "/opt/homebrew/bin/$name" "/usr/local/bin/$name"; do
-        if [ -x "$candidate" ] && usable "$candidate"; then
+        if [ -x "$candidate" ]; then
             exec "$candidate" -I "$main" "$@"
         fi
     done
+done
+for candidate in $(command -v python3 2>/dev/null) /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if [ -x "$candidate" ] && usable "$candidate"; then
+        exec "$candidate" -I "$main" "$@"
+    fi
 done
 
 echo "auth-picker: needs Python 3.11 or newer, and found none." >&2

@@ -38,10 +38,13 @@ class Journal:
     started_at: float = field(default_factory=time.time)
     # Which credential store this switch wrote to ("<kind>-<hash of store id>").
     store: str = ""
+    # The profile that holds the previous login byte for byte, if one does.
+    # Then that profile is the pre-image and no copy is written (since 1.3.0).
+    pre_profile: str = ""
 
     @property
     def pre_key(self) -> str:
-        return f"tx:{self.txid}:pre"
+        return f"profile:{self.pre_profile}" if self.pre_profile else f"tx:{self.txid}:pre"
 
 
 @dataclass
@@ -69,7 +72,7 @@ class JournalStore:
         return os.path.join(self.tx_dir, f"{store}.json")
 
     def begin(self, journal: Journal, pre: Sensitive | None) -> None:
-        if pre is not None:
+        if pre is not None and not journal.pre_profile:
             self.store.put(journal.pre_key, pre)  # secret first
         self.write(journal)
 
@@ -87,7 +90,8 @@ class JournalStore:
 
     def close(self, journal: Journal) -> None:
         remove_private(self._tx_path(journal.store))  # journal first, then its secret
-        self.store.delete(journal.pre_key)
+        if journal.pre_key.startswith("tx:"):  # a profile is never ours to delete
+            self.store.delete(journal.pre_key)
 
     # -- rescues -----------------------------------------------------------
 

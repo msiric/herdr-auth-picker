@@ -125,7 +125,10 @@ class CodexBackend:
             time.sleep(0.05)
         raise Inconsistent("codex-changing", "Codex's auth.json is being written; try again")
 
-    def read_live(self) -> Snapshot | None:
+    def read_live(self, settled: bool = False) -> Snapshot | None:
+        # Codex 0.163.0 writes auth.json in place and takes no lock, so it is
+        # always read twice, settled or not.
+        del settled
         found = self._consistent_read()
         if found is None:
             return None

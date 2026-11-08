@@ -85,11 +85,12 @@ def stamp(app: App, panes: set[str] | None = None) -> None:
         pane = agent["pane_id"]
         if kind is None or (panes is not None and pane not in panes):
             continue
+        tokens: dict[str, str] = {}
         label = labels.get(kind)
         if label:
-            text = render(app.config.badge_format, app.config.glyph, label, kind, used[kind])
-            herdr.set_badge(pane, text)
+            tokens[herdr.BADGE_FIELD] = render(
+                app.config.badge_format, app.config.glyph, label, kind, used[kind]
+            )
         if used[kind]:
-            herdr.set_badge(pane, used[kind], herdr.USAGE_FIELD)
-        else:
-            herdr.clear_badge(pane, herdr.USAGE_FIELD)
+            tokens[herdr.USAGE_FIELD] = used[kind]
+        herdr.report(pane, tokens, () if used[kind] else (herdr.USAGE_FIELD,))

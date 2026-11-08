@@ -317,10 +317,7 @@ def test_stamp_puts_usage_on_its_own_token(world: World, monkeypatch: pytest.Mon
         "agents",
         lambda: [{"pane_id": "p1", "agent": "claude"}, {"pane_id": "p2", "agent": "copilot"}],
     )
-    calls: list[tuple[str, ...]] = []
-    monkeypatch.setattr(herdr, "set_badge", lambda *a: calls.append(("set", *a)))
-    monkeypatch.setattr(herdr, "clear_badge", lambda *a: calls.append(("clear", *a)))
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(herdr, "report", lambda *a: calls.append(a))
     badge.stamp(app)
-    assert ("set", "p1", "👤 Work") in calls
-    assert ("set", "p1", "42% 5h", "usage") in calls
-    assert all(call[1] == "p1" for call in calls)
+    assert calls == [("p1", {"acct": "👤 Work", "usage": "42% 5h"}, ())]

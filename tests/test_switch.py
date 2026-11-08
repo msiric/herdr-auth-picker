@@ -87,7 +87,7 @@ def test_switch_moves_the_login_and_keeps_undo(world: World) -> None:
     assert world.who() == "bob@example.com"
     assert not world.tx_file().exists()
     assert (
-        world.profiles.store.get(undo_key(store_tag(world.claude)))
+        world.switcher._undo_secret(world.claude)
         == world.claude.parse_secret(Sensitive(claude_secret("alice"))).secret
     )
 
@@ -300,3 +300,87 @@ def test_another_stores_journal_is_left_alone(world: World) -> None:
     foreign.write_text('{"not": "for this store"}')
     assert world.switcher.switch("claude", "B").status == "switched"
     assert foreign.exists()
+
+
+def test_a_switch_writes_no_second_copy_of_the_outgoing_login(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    written: list[str] = []
+    real_put = world.profiles.store.put
+
+    def spy(key: str, value: Sensitive) -> None:
+        written.append(key)
+        real_put(key, value)
+
+    monkeypatch.setattr(world.profiles.store, "put", spy)
+    world.switcher.switch("claude", "B")
+    assert written == []  # A's profile already held exactly the live login
+    assert world.switcher.has_undo("claude")
+    world.switcher.undo("claude")
+    assert world.who() == "alice@example.com"
+    world.switcher.undo("claude")  # undo toggles between the last two
+    assert world.who() == "bob@example.com"
+
+
+def test_undo_follows_the_accounts_newest_login_and_ends_with_its_profile(world: World) -> None:
+    world.switcher.switch("claude", "B")
+    a = world.profiles.find("claude", "A")
+    newer = world.claude.parse_secret(Sensitive(claude_secret("alice", 7)))
+    world.profiles.update_secret(a, newer)
+    world.switcher.undo("claude")
+    assert b"refresh-7" in (world.home / ".claude" / ".credentials.json").read_bytes()
+
+    world.switcher.switch("claude", "B")
+    world.profiles.delete(world.profiles.find("claude", "A"))
+    assert not world.switcher.has_undo("claude")
+    with pytest.raises(SwitchError, match="nothing to undo"):
+        world.switcher.undo("claude")
+
+
+def test_an_undo_copy_from_before_1_3_still_works_and_is_then_dropped(world: World) -> None:
+    legacy = undo_key(store_tag(world.claude))
+    world.profiles.store.put(
+        legacy, world.claude.parse_secret(Sensitive(claude_secret("bob"))).secret
+    )
+    assert world.switcher.has_undo("claude")
+    world.switcher.undo("claude")
+    assert world.who() == "bob@example.com"
+    assert world.profiles.store.get(legacy) is None  # replaced by the pointer
+    world.switcher.undo("claude")
+    assert world.who() == "alice@example.com"
+
+
+def test_recovery_never_restores_a_profile_that_moved_on(world: World) -> None:
+    live = world.live()
+    a = world.profiles.find("claude", "A")
+    target = world.claude.parse_secret(Sensitive(claude_secret("bob")))
+    journal = Journal(
+        txid="crashed",
+        kind="claude",
+        phase="installing",
+        target_label="B",
+        target_fingerprint=target.fingerprint,
+        target_components=world.claude.components(target),
+        pre_fingerprint=live.fingerprint,
+        pre_components=world.claude.components(live),
+        store=store_tag(world.claude),
+        pre_profile=a.id,
+    )
+    world.journals.begin(journal, live.secret)
+    half_applied = claude_blob("bob")  # credential written, identity not yet
+    (world.home / ".claude" / ".credentials.json").write_text(json.dumps(half_applied))
+    world.profiles.update_secret(a, world.claude.parse_secret(Sensitive(claude_secret("alice", 9))))
+    assert world.switcher.recover("claude") == "rescued"
+    assert world.profiles.store.get(world.profiles.find("claude", "A").key) is not None
+
+
+def test_a_claude_switch_does_not_scan_processes(tmp_path: Path) -> None:
+    w = World(tmp_path)
+    w.log_in("alice")
+    w.save("A", "alice")
+    w.save("B", "bob")
+    scans: list[str] = []
+    w.switcher.scan = lambda kind: scans.append(kind) or procscan.Sessions(pinned=2)
+    w.switcher.switch("claude", "B")
+    assert scans == []
+    assert "2 running session(s) will not follow" in w.switcher.pinned_notes("claude")[0]

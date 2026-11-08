@@ -139,3 +139,19 @@ def test_an_interrupted_revert_loses_nothing_and_finishes_when_run_again(
     assert b"refresh-1" in profiles.secret(after)[0].reveal()
     assert b"refresh-2" in (profiles.store.get(after.prev_key) or Sensitive(b"")).reveal()
     assert profiles.store.get(after.swap_key) is None
+
+
+def test_new_account_details_around_the_same_tokens_keep_the_previous_generation(
+    profiles: Profiles,
+) -> None:
+    import json  # noqa: PLC0415
+
+    work = profiles.create("Work", claude(profiles, "alice", 1))
+    work = profiles.update_secret(work, claude(profiles, "alice", 2))
+    obj = json.loads(claude_secret("alice", 2))
+    obj["oauth_account"]["displayName"] = "Alice A."  # Claude refreshed the profile fields
+    renamed = profiles.backends["claude"].parse_secret(Sensitive(json.dumps(obj).encode()))
+    after = profiles.update_secret(work, renamed)
+    assert profiles.secret(after)[0] == renamed.secret
+    assert after.prev_cred_hash == work.prev_cred_hash  # generation 1 still kept
+    assert b"refresh-1" in (profiles.store.get(after.prev_key) or Sensitive(b"")).reveal()

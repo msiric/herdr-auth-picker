@@ -112,7 +112,11 @@ def _report(app: App, outcome: Outcome, restart_codex: bool = False) -> int:
         return 0
     body = outcome.describe if app.config.notify_identity else ""
     out(f"{outcome.kind}: switched to {outcome.label}")
-    notes = outcome.notes + _restart_codex(app, outcome, restart_codex)
+    notes = (
+        outcome.notes
+        + _restart_codex(app, outcome, restart_codex)
+        + app.switcher.pinned_notes(outcome.kind)
+    )
     for note in notes:
         out(f"  note: {note}")
     _after_change(app, title, "; ".join([b for b in [body, *notes] if b]))
@@ -311,7 +315,7 @@ def _cmd_ui(args: argparse.Namespace) -> int:
 
 
 def _cmd_open(args: argparse.Namespace) -> int:
-    badge.stamp(_app(args))
+    del args  # opens at once; herdr's events keep the badges current
     if not herdr.open_pane("picker"):
         raise AuthPickerError("open", "herdr could not open the picker")
     return 0

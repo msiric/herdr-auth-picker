@@ -55,6 +55,12 @@ contexts = ["global", "pane"]
 command = ["/bin/sh", "bin/auth-picker", "sync"]
 
 [[actions]]
+id = "stamp"
+title = "Auth Picker: refresh the account badges"
+contexts = ["global"]
+command = ["/bin/sh", "bin/auth-picker", "stamp"]
+
+[[actions]]
 id = "status"
 title = "Auth Picker: status"
 contexts = ["global"]

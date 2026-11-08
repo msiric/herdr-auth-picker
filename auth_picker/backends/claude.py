@@ -231,7 +231,14 @@ class ClaudeBackend:
             raise Unsupported("claude-no-config", f"{self.paths.identity_file} does not exist")
         return found
 
-    def _consistent_read(self) -> _Read:
+    def _consistent_read(self, settled: bool = False) -> _Read:
+        """The credential and the identity as one consistent pair.
+
+        ``settled``: the caller holds Claude's own locks, so nothing in Claude
+        can write either one meanwhile, and one read of each is enough.
+        """
+        if settled:
+            return _Read(self.store.read(), self._read_identity())
         for _ in range(_READ_ATTEMPTS):
             first = self.store.read()
             identity = self._read_identity()
@@ -256,8 +263,8 @@ class ClaudeBackend:
             )
         return blob
 
-    def read_live(self) -> Snapshot | None:
-        read = self._consistent_read()
+    def read_live(self, settled: bool = False) -> Snapshot | None:
+        read = self._consistent_read(settled)
         if read.store is None:
             if self.on_macos and self._login_in_credentials_file():
                 raise Unsupported(
@@ -353,7 +360,7 @@ class ClaudeBackend:
         writes nothing.
         """
         target = secret_object(self.parse_secret(secret).secret, self.kind)
-        now = self._consistent_read()
+        now = self._consistent_read(settled=True)  # the caller holds our locks
         before: _Read | None = expect.read if expect is not None else None
         if expect is not None and before is None:
             raise ValueError("expect must be a live snapshot")
