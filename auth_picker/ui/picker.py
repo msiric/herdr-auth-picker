@@ -24,7 +24,7 @@ from auth_picker.profiles import Profile
 from auth_picker.switch import NeedsConfirmation, Outcome
 
 TITLES = {"claude": "Claude Code", "codex": "Codex"}
-HELP = "j/k move · enter switch · s save · r rename · x delete · u undo · q quit"
+HELP = "j/k move · enter switch · s save · r rename · x delete · u undo · d usage · q quit"
 REFRESH_MS = 3000
 POLL_BUSY_MS = 200
 
@@ -38,10 +38,11 @@ class Row:
     text: str
     profile: Profile | None = None
     live: bool = False
+    detail: bool = False  # one usage window under a profile (d)
 
     @property
     def header(self) -> bool:
-        return self.profile is None
+        return self.profile is None and not self.detail
 
 
 class Picker:
@@ -59,6 +60,7 @@ class Picker:
         self.progress = progress or (lambda _text: None)
         self.cursor = 0
         self.message = ""
+        self.details = False
         self.usage_read_at = 0.0
         self._lock = threading.Lock()
         self._workers: list[threading.Thread] = []
@@ -147,19 +149,27 @@ class Picker:
             if self.app.journals.rescues(kind):
                 state += " · ! needs attention, run status"
             rows.append(Row(kind, f"{TITLES[kind]} — {state}"))
-            rows.extend(
-                Row(
-                    kind,
-                    f"{p.label}  {p.identity.describe()}{self._usage_text(p.fingerprint)}",
-                    p,
-                    p.fingerprint == live_print,
+            for p in saved:
+                rows.append(
+                    Row(
+                        kind,
+                        f"{p.label}  {p.identity.describe()}{self._usage_text(p.fingerprint)}",
+                        p,
+                        p.fingerprint == live_print,
+                    )
                 )
-                for p in saved
-            )
+                if self.details:
+                    rows.extend(Row(kind, line, detail=True) for line in self._windows(p))
         return rows
 
+    def _windows(self, profile: Profile) -> list[str]:
+        if self.app.usage is None:
+            return ["usage is off ([usage] enabled = true)"]
+        lines = usage.details(self.app.usage.cached().get(profile.fingerprint), time.time())
+        return lines or ["never read"]
+
     def _selectable(self, rows: list[Row]) -> list[int]:
-        return [i for i, row in enumerate(rows) if not row.header]
+        return [i for i, row in enumerate(rows) if row.profile is not None]
 
     def selected(self, rows: list[Row]) -> Row | None:
         choices = self._selectable(rows)
@@ -202,6 +212,8 @@ class Picker:
             self._rename(row.profile)
         elif key == "x" and row and row.profile:
             self._delete(row.profile, row.live)
+        elif key == "d":
+            self.details = not self.details
         return True
 
     def _undo(self, kind: str) -> None:
@@ -332,6 +344,8 @@ def draw(screen: Screen, picker: Picker, rows: list[Row], attrs: dict[str, int])
         if row.header:
             y += 1 if y > 3 else 0  # noqa: PLR2004 - a blank line between kinds
             put(y, row.text, attrs.get("bold", 0))
+        elif row.detail:
+            put(y, f"       {row.text}", attrs.get("dim", 0))
         else:
             mark = "●" if row.live else " "
             attr = attrs.get("reverse", 0) if row is selected else 0

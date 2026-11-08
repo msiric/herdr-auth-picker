@@ -54,9 +54,13 @@ class UsageError(AuthPickerError):
 
 @dataclass(frozen=True)
 class Window:
-    label: str
+    label: str  # session | weekly | monthly | "<N>d"
     percent: float | None
     resets_at: float | None
+    # A limit on one model only (Claude's per-model weekly limits): its name.
+    scope: str | None = None
+    # The provider's own "this is the limit that applies" flag, where it has one.
+    active: bool = False
 
 
 @dataclass
@@ -141,11 +145,40 @@ def _when(value: Any) -> float | None:
     return None
 
 
+_CLAUDE_KINDS = {"session": "session", "weekly_all": "weekly", "weekly_scoped": "weekly"}
+
+
+def _claude_limits(limits: list[Any]) -> list[Window]:
+    """Claude's `limits` list: every window, per-model ones included."""
+    windows = []
+    for entry in limits:
+        if not isinstance(entry, dict):
+            continue
+        kind, group = entry.get("kind"), entry.get("group")
+        label = _CLAUDE_KINDS.get(str(kind)) or (group if isinstance(group, str) else str(kind))
+        scope = entry.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        name = model.get("display_name") if isinstance(model, dict) else None
+        windows.append(
+            Window(
+                label,
+                _number(entry.get("percent")),
+                _when(entry.get("resets_at")),
+                name if isinstance(name, str) and name else None,
+                entry.get("is_active") is True,
+            )
+        )
+    return windows
+
+
 def parse_claude(body: Any, now: float) -> list[Window]:
     del now  # same signature as parse_codex
     windows: list[Window] = []
     if not isinstance(body, dict):
         return windows
+    limits = body.get("limits")
+    if isinstance(limits, list) and (from_limits := _claude_limits(limits)):
+        return from_limits
     for name, label in (("five_hour", "session"), ("seven_day", "weekly")):
         block = body.get(name)
         if isinstance(block, dict):
@@ -340,39 +373,122 @@ def retry_delay(value: str | None, now: float) -> float:
 
 
 SHORT_LABELS = {"session": "5h", "weekly": "wk", "monthly": "mo"}
+_ORDER = {"session": 0, "weekly": 1, "monthly": 2}
+
+
+def binding(windows: list[Window]) -> Window | None:
+    """The window closest to stopping this account.
+
+    1. A full window: if several, the one that resets last, since that is
+       when the account is usable again. A per-model window counts here only.
+    2. Otherwise the account-wide window used most. On a tie, the one the
+       provider flags as active (Claude's undocumented `is_active`, trusted
+       only this far), then the shorter window.
+    """
+    known = [w for w in windows if w.percent is not None]
+    full = [w for w in known if (w.percent or 0) >= 100]  # noqa: PLR2004 - percent
+    if full:
+        return max(full, key=lambda w: w.resets_at or 0)
+    account = [w for w in known if w.scope is None] or known
+    if not account:
+        return None
+    return max(account, key=lambda w: (w.percent or 0, w.active, -_ORDER.get(w.label, 9)))
+
+
+def _short(window: Window) -> str:
+    if window.scope:
+        return window.scope[:8]
+    return SHORT_LABELS.get(window.label, window.label)
 
 
 def _left(seconds: int) -> str:
     days, hours, minutes = seconds // 86400, (seconds % 86400) // 3600, (seconds % 3600) // 60
-    return f"{days}d" if days else f"{hours}h{minutes:02d}"
+    if days >= 10:  # noqa: PLR2004 - a monthly window: hours would be noise
+        return f"{days}d"
+    return f"{days}d{hours:02d}h" if days else f"{hours}h{minutes:02d}"
 
 
-def compact(reading: Reading | None, now: float, ttl_s: float) -> str:
-    """ "42% 5h ↺2h10": fits a sidebar row. "~" marks an old reading."""
-    if reading is None or not reading.windows:
-        return ""
-    window = next((w for w in reading.windows if w.label == "session"), reading.windows[0])
-    if window.percent is None:
-        return ""
-    stale = reading.read_at is None or now - reading.read_at > 2 * ttl_s
-    label = SHORT_LABELS.get(window.label, window.label)
-    text = f"{'~' if stale else ''}{round(window.percent)}% {label}"
+def _stale(reading: Reading, now: float, ttl_s: float) -> bool:
+    return reading.read_at is None or now - reading.read_at > 2 * ttl_s
+
+
+def _one(window: Window, now: float) -> str:
+    text = f"{round(window.percent or 0)}% {_short(window)}"
     if window.resets_at and window.resets_at > now:
         text += f" ↺{_left(int(window.resets_at - now))}"
     return text
 
 
+def compact(reading: Reading | None, now: float, ttl_s: float, style: str = "binding") -> str:
+    """For a sidebar row. "~" marks an old reading.
+
+    binding: "37% wk ↺2d", the window closest to stopping the account.
+    both: "12%·5h 37%·wk", every account-wide window; a full one still wins.
+    """
+    if reading is None:
+        return ""
+    window = binding(reading.windows)
+    if window is None:
+        return ""
+    mark = "~" if _stale(reading, now, ttl_s) else ""
+    account = sorted(
+        (w for w in reading.windows if w.scope is None and w.percent is not None),
+        key=lambda w: _ORDER.get(w.label, 9),
+    )
+    if style == "both" and (window.percent or 0) < 100 and len(account) > 1:  # noqa: PLR2004
+        return mark + " ".join(f"{round(w.percent or 0)}%·{_short(w)}" for w in account)
+    return mark + _one(window, now)
+
+
+def window_token(reading: Reading | None, now: float, ttl_s: float, label: str) -> str:
+    """One account-wide window by name, e.g. "37% wk ↺2d", for $usage_5h / $usage_wk."""
+    if reading is None:
+        return ""
+    found = next(
+        (
+            w
+            for w in reading.windows
+            if w.label == label and w.scope is None and w.percent is not None
+        ),
+        None,
+    )
+    if found is None:
+        return ""
+    return ("~" if _stale(reading, now, ttl_s) else "") + _one(found, now)
+
+
+def _long(window: Window) -> str:
+    name = f"{window.scope} {window.label}" if window.scope else window.label
+    return f"{round(window.percent or 0)}% {name}"
+
+
+def _resets(window: Window, now: float) -> str:
+    if not window.resets_at or window.resets_at <= now:
+        return ""
+    left = int(window.resets_at - now)
+    days, hours, minutes = left // 86400, (left % 86400) // 3600, (left % 3600) // 60
+    return f"resets {days}d{hours:02d}h" if days else f"resets {hours}h{minutes:02d}"
+
+
 def summary(reading: Reading | None, now: float, ttl_s: float) -> str:
-    """ "42% session, resets 2h10" (or "~42%" when old), for the picker and badge."""
-    if reading is None or not reading.windows:
+    """ "37% weekly, resets 2d18h" for the binding window ("~" when old)."""
+    if reading is None:
         return ""
-    window = next((w for w in reading.windows if w.label == "session"), reading.windows[0])
-    if window.percent is None:
+    window = binding(reading.windows)
+    if window is None:
         return ""
-    stale = reading.read_at is None or now - reading.read_at > 2 * ttl_s
-    text = f"{'~' if stale else ''}{round(window.percent)}% {window.label}"
-    if window.resets_at and window.resets_at > now:
-        left = int(window.resets_at - now)
-        days, hours, minutes = left // 86400, (left % 86400) // 3600, (left % 3600) // 60
-        text += f", resets {days}d{hours:02d}h" if days else f", resets {hours}h{minutes:02d}"
-    return text
+    text = ("~" if _stale(reading, now, ttl_s) else "") + _long(window)
+    resets = _resets(window, now)
+    return f"{text}, {resets}" if resets else text
+
+
+def details(reading: Reading | None, now: float) -> list[str]:
+    """Every window, most constraining first: "  37% weekly   resets 2d18h"."""
+    if reading is None:
+        return []
+    chosen = binding(reading.windows)
+    ordered = sorted(
+        (w for w in reading.windows if w.percent is not None),
+        key=lambda w: (w is not chosen, w.scope is not None, _ORDER.get(w.label, 9)),
+    )
+    return [f"{_long(w):<18} {_resets(w, now)}".rstrip() for w in ordered]

@@ -28,6 +28,9 @@ _FIELD = re.compile(r"\{([^{}]*)\}")
 class UsageConfig:
     enabled: bool = False
     ttl_s: int = 300
+    # $usage shows the window closest to stopping the account ("binding"), or
+    # every account-wide window ("both": "12%·5h 37%·wk").
+    style: str = "binding"
 
 
 @dataclass(frozen=True)
@@ -113,6 +116,7 @@ _TOP: dict[str, Validator] = {
 _USAGE: dict[str, Validator] = {
     "enabled": _boolean,
     "ttl_s": _number(120, 86400, integer=True),
+    "style": _choice("binding", "both"),
 }
 
 

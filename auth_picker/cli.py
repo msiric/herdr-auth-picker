@@ -322,7 +322,7 @@ def _cmd_open(args: argparse.Namespace) -> int:
 
 
 def _cmd_usage(args: argparse.Namespace) -> int:
-    from auth_picker.usage import summary  # noqa: PLC0415
+    from auth_picker.usage import details, summary  # noqa: PLC0415
 
     app = _app(args)
     if app.usage is None:
@@ -341,9 +341,13 @@ def _cmd_usage(args: argparse.Namespace) -> int:
                 out(f"{kind}: {reading.error}")
         cached = app.usage.cached()
         for profile in app.profiles.of_kind(kind):
-            text = summary(cached.get(profile.fingerprint), now, app.config.usage.ttl_s)
+            reading = cached.get(profile.fingerprint)
+            text = summary(reading, now, app.config.usage.ttl_s)
             mark = "●" if live and live.fingerprint == profile.fingerprint else " "
             out(f"{mark} {kind:<6} {profile.label:<20} {text or 'never read'}")
+            lines = details(reading, now)
+            for line in lines if len(lines) > 1 else []:
+                out(f"{'':<30}{line}")
     return 0
 
 

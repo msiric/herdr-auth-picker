@@ -273,3 +273,92 @@ def test_compact_fits_a_sidebar_row() -> None:
     monthly = Reading(read_at=NOW, windows=[Window("monthly", 3.0, NOW + 29 * 86400 + 60)])
     assert compact(monthly, NOW, 300) == "3% mo ↺29d"
     assert compact(None, NOW, 300) == ""
+
+
+CLAUDE_LIMITS = {
+    "five_hour": {"utilization": 12.0, "resets_at": "2099-01-01T00:00:00Z"},
+    "limits": [
+        {
+            "kind": "session",
+            "group": "session",
+            "percent": 12,
+            "resets_at": NOW + 3600,
+            "scope": None,
+            "is_active": False,
+        },
+        {
+            "kind": "weekly_all",
+            "group": "weekly",
+            "percent": 37,
+            "resets_at": NOW + 3 * 86400,
+            "scope": None,
+            "is_active": True,
+        },
+        {
+            "kind": "weekly_scoped",
+            "group": "weekly",
+            "percent": 7,
+            "resets_at": NOW + 3 * 86400,
+            "scope": {"model": {"id": None, "display_name": "Fable"}},
+            "is_active": False,
+        },
+    ],
+}
+
+
+def test_claude_limits_list_is_read_whole() -> None:
+    from auth_picker.usage import parse_claude  # noqa: PLC0415
+
+    windows = parse_claude(CLAUDE_LIMITS, NOW)
+    assert [(w.label, w.percent, w.scope, w.active) for w in windows] == [
+        ("session", 12.0, None, False),
+        ("weekly", 37.0, None, True),
+        ("weekly", 7.0, "Fable", False),
+    ]
+
+
+def _w(label: str, percent: float, resets: float = NOW + 3600, **kw: object) -> Window:
+    return Window(label, percent, resets, **kw)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("windows", "expected"),
+    [
+        # the most used account-wide window
+        ([_w("session", 12), _w("weekly", 37)], ("weekly", 37.0)),
+        ([_w("session", 85), _w("weekly", 37)], ("session", 85.0)),
+        # a tie goes to the provider's flag, then the shorter window
+        ([_w("session", 40), _w("weekly", 40, active=True)], ("weekly", 40.0)),
+        ([_w("session", 40), _w("weekly", 40)], ("session", 40.0)),
+        # a per-model window counts only once it is full
+        ([_w("session", 10), _w("weekly", 20), _w("weekly", 90, scope="Fable")], ("weekly", 20.0)),
+        ([_w("session", 10), _w("weekly", 100, scope="Fable")], ("weekly", 100.0)),
+        # several full: the one that frees up last
+        ([_w("session", 100, NOW + 60), _w("weekly", 100, NOW + 86400)], ("weekly", 100.0)),
+    ],
+)
+def test_the_binding_window(windows: list[Window], expected: tuple[str, float]) -> None:
+    from auth_picker.usage import binding  # noqa: PLC0415
+
+    chosen = binding(windows)
+    assert chosen is not None
+    assert (chosen.label, chosen.percent) == expected
+
+
+def test_usage_styles_and_window_tokens() -> None:
+    from auth_picker.usage import (  # noqa: PLC0415
+        compact,
+        details,
+        parse_claude,
+        window_token,
+    )
+
+    reading = Reading(read_at=NOW, windows=parse_claude(CLAUDE_LIMITS, NOW))
+    assert compact(reading, NOW, 300) == "37% wk ↺3d00h"
+    assert compact(reading, NOW, 300, "both") == "12%·5h 37%·wk"
+    assert window_token(reading, NOW, 300, "session") == "12% 5h ↺1h00"
+    assert window_token(reading, NOW, 300, "monthly") == ""
+    assert details(reading, NOW)[0].startswith("37% weekly")
+    assert any("Fable" in line for line in details(reading, NOW))
+    full = Reading(read_at=NOW, windows=[_w("session", 100, NOW + 600), _w("weekly", 50)])
+    assert compact(full, NOW, 300, "both") == "100% 5h ↺0h10"  # blocked wins over "both"

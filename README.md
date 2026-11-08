@@ -103,7 +103,7 @@ description = "accounts: switch back"
 
 | key | action | does |
 |-----|--------|------|
-| `prefix+a` | `open` | the picker: `j`/`k` move, `enter` switch, `s` save, `r` rename, `x` delete, `u` undo, `q` close |
+| `prefix+a` | `open` | the picker: `j`/`k` move, `enter` switch, `s` save, `r` rename, `x` delete, `u` undo, `d` every usage window, `q` close |
 | `prefix+shift+a` | `next` | switch the focused pane's tool (Claude or Codex) to its next saved account |
 | `prefix+u` | `undo` | switch back to the account you were on before the last switch; press again to toggle back |
 
@@ -142,10 +142,24 @@ claude · work · 42% 5h ↺2h10
 With long profile names, or a narrow sidebar, give each token its own row
 instead (`[["agent", "$usage"], ["$acct"]]`) or raise `ui.sidebar_width`.
 
-`42% 5h ↺2h10` means 42% of the five-hour window used, resetting in 2h10;
-`~` marks a reading older than twice `ttl_s`. `wk` and `mo` are the weekly and
-monthly windows. Short profile names read best (`bin/auth-picker rename
-claude mario.example work`); `badge_format = "{label}"` drops the glyph.
+`$usage` shows the window closest to stopping the account. An account stops
+when *any* of its windows is full, so:
+
+1. a full window wins (if several, the one that frees up last);
+2. otherwise the account-wide window used most, so `37% wk ↺2d17h` when the
+   weekly limit is further along than the five-hour one (`12% 5h`);
+3. a per-model weekly limit (Claude's, e.g. `Fable`) counts only once full.
+
+`42% 5h ↺2h10` reads: 42% of the five-hour window used, resetting in 2h10.
+`wk` and `mo` are the weekly and monthly windows, and `~` marks a reading older
+than twice `ttl_s`, or the last one taken while that account was live. To see
+every window all the time, set `[usage] style = "both"` (`12%·5h 37%·wk`), or
+use the `$usage_5h` and `$usage_wk` tokens, which always hold those two
+windows. `d` in the picker and `bin/auth-picker usage` list every window,
+per-model ones included.
+
+Short profile names read best (`bin/auth-picker rename claude mario.example
+work`); `badge_format = "{label}"` drops the glyph.
 
 A new Claude or Codex pane gets its badge as soon as herdr detects the agent.
 When an agent finishes a turn, the plugin re-reads that account's usage (at
@@ -175,13 +189,14 @@ bad values are errors that `status` reports, never silently ignored.
 |-----|---------|---------|
 | `notify` | `true` | herdr notification when an action switches, saves or fails |
 | `notify_identity` | `false` | include the email and plan in those notifications |
-| `badge` | `true` | stamp `$acct` and `$usage` on Claude and Codex panes |
+| `badge` | `true` | stamp `$acct`, `$usage`, `$usage_5h` and `$usage_wk` on Claude and Codex panes |
 | `badge_format` | `"{glyph} {label}"` | the `$acct` text, from `{glyph}`, `{label}`, `{kind}`, `{usage}` |
 | `glyph` | `"👤"` | the badge character |
 | `lock_timeout_s` | `5` | how long to wait for another switch, or for Claude's own locks |
 | `codex_restart` | `"ask"` | after a Codex switch, restart Codex's background server: `ask` (the picker and a terminal ask; actions only tell you), `always`, or `never` |
 | `[usage] enabled` | `false` | read the logged-in account's usage from the provider |
 | `[usage] ttl_s` | `300` | how often, at most, in seconds (minimum 120) |
+| `[usage] style` | `"binding"` | `$usage` shows the window closest to stopping the account, or `"both"` account-wide windows |
 
 ## What it reads and writes
 

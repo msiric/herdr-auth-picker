@@ -216,3 +216,21 @@ def test_switching_shows_progress_first(world: World) -> None:
     picker.handle("enter")
     assert shown == ["switching to B…"]
     assert picker.message.startswith("switched to B")
+
+
+def test_d_shows_every_usage_window_under_each_profile(world: World) -> None:
+    from auth_picker.usage import Reading, Usage, Window  # noqa: PLC0415
+
+    picker = _picker(world, Answers())
+    picker.app.usage = Usage(str(world.root / "state"), 300)
+    a = world.profiles.find("claude", "A")
+    reading = Reading(
+        read_at=time.time(), windows=[Window("session", 12, None), Window("weekly", 37, None)]
+    )
+    picker.app.usage.cached = lambda: {a.fingerprint: reading}  # type: ignore[method-assign]
+    assert not any(r.detail for r in picker.rows())
+    picker.handle("d")
+    rows = picker.rows()
+    assert [r.text.split()[1] for r in rows if r.detail][:2] == ["weekly", "session"]
+    _select(picker, "B")  # details are never selectable
+    assert picker.selected(picker.rows()).profile.label == "B"  # type: ignore[union-attr]

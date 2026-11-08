@@ -40,14 +40,8 @@ def render(fmt: str, glyph: str, label: str, kind: str, used: str = "") -> str:
 
 
 def used_for(app: App, kind: str) -> str:
-    """The cached usage summary for the live account. No network, ever."""
-    if app.usage is None:
-        return ""
-    identity = app.backends[kind].live_identity()
-    if identity is None:
-        return ""
-    reading = app.usage.cached().get(identity.fingerprint(kind))
-    return usage.summary(reading, time.time(), app.config.usage.ttl_s).split(",")[0]
+    """{usage} in the tab bar: the same text as the sidebar's $usage."""
+    return usage_token(app, kind)
 
 
 def line(app: App, kinds: Sequence[str]) -> str:
@@ -60,15 +54,31 @@ def line(app: App, kinds: Sequence[str]) -> str:
     )
 
 
-def usage_token(app: App, kind: str) -> str:
-    """The compact usage text for the live account, from the cache only."""
+USAGE_TOKENS = (herdr.USAGE_FIELD, "usage_5h", "usage_wk")
+
+
+def usage_tokens(app: App, kind: str) -> dict[str, str]:
+    """$usage (per usage.style), $usage_5h and $usage_wk for the live account.
+
+    From the cache only: no network, no secrets. Empty values mean "clear it".
+    """
+    empty = dict.fromkeys(USAGE_TOKENS, "")
     if app.usage is None:
-        return ""
+        return empty
     identity = app.backends[kind].live_identity()
     if identity is None:
-        return ""
+        return empty
     reading = app.usage.cached().get(identity.fingerprint(kind))
-    return usage.compact(reading, time.time(), app.config.usage.ttl_s)
+    now, ttl = time.time(), app.config.usage.ttl_s
+    return {
+        herdr.USAGE_FIELD: usage.compact(reading, now, ttl, app.config.usage.style),
+        "usage_5h": usage.window_token(reading, now, ttl, "session"),
+        "usage_wk": usage.window_token(reading, now, ttl, "weekly"),
+    }
+
+
+def usage_token(app: App, kind: str) -> str:
+    return usage_tokens(app, kind)[herdr.USAGE_FIELD]
 
 
 def stamp(app: App, panes: set[str] | None = None) -> None:
@@ -79,18 +89,17 @@ def stamp(app: App, panes: set[str] | None = None) -> None:
     if not app.config.badge:
         return
     labels = {kind: label_for(app, kind) for kind in app.backends}
-    used = {kind: usage_token(app, kind) for kind in app.backends}
+    used = {kind: usage_tokens(app, kind) for kind in app.backends}
     for agent in herdr.agents():
         kind = herdr.kind_of_agent(agent)
         pane = agent["pane_id"]
         if kind is None or (panes is not None and pane not in panes):
             continue
-        tokens: dict[str, str] = {}
+        mine = used[kind]
+        tokens = {name: value for name, value in mine.items() if value}
         label = labels.get(kind)
         if label:
             tokens[herdr.BADGE_FIELD] = render(
-                app.config.badge_format, app.config.glyph, label, kind, used[kind]
+                app.config.badge_format, app.config.glyph, label, kind, mine[herdr.USAGE_FIELD]
             )
-        if used[kind]:
-            tokens[herdr.USAGE_FIELD] = used[kind]
-        herdr.report(pane, tokens, () if used[kind] else (herdr.USAGE_FIELD,))
+        herdr.report(pane, tokens, tuple(name for name, value in mine.items() if not value))
