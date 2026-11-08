@@ -380,7 +380,12 @@ def test_a_claude_switch_does_not_scan_processes(tmp_path: Path) -> None:
     w.save("A", "alice")
     w.save("B", "bob")
     scans: list[str] = []
-    w.switcher.scan = lambda kind: scans.append(kind) or procscan.Sessions(pinned=2)
+
+    def scan(kind: str) -> procscan.Sessions:
+        scans.append(kind)
+        return procscan.Sessions(pinned=2)
+
+    w.switcher.scan = scan
     w.switcher.switch("claude", "B")
     assert scans == []
     assert "2 running session(s) will not follow" in w.switcher.pinned_notes("claude")[0]
