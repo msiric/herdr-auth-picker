@@ -1,6 +1,6 @@
 id = "msiric.auth-picker"
 name = "Auth Picker"
-version = "1.2.0"
+version = "1.3.0"
 min_herdr_version = "0.9.1"
 description = "Switch Claude Code and Codex logins in herdr, without losing them."
 platforms = ["macos", "linux"]

@@ -4,7 +4,7 @@ Switch which Claude Code or Codex account is logged in, from inside
 [herdr](https://herdr.dev), without logging out and back in, and without
 losing a login along the way.
 
-> **Status: 1.2.0.** Verified end to end with real Claude and Codex accounts,
+> **Status: 1.3.0.** Verified end to end with real Claude and Codex accounts,
 > including running sessions, and independently reviewed. Results:
 > [`docs/e2e-checklist.md`](docs/e2e-checklist.md).
 
@@ -49,7 +49,7 @@ in [`docs/threat-model.md`](docs/threat-model.md).
 From GitHub, pinned to a release (read the code first: it handles your logins):
 
 ```sh
-herdr plugin install msiric/herdr-auth-picker --ref v1.2.0
+herdr plugin install msiric/herdr-auth-picker --ref v1.3.0
 ```
 
 Or from a local checkout: `herdr plugin link /path/to/herdr-auth-picker`.
