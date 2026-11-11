@@ -87,3 +87,16 @@ def test_launcher_does_not_start_a_versioned_python_just_to_check_it(tmp_path: P
     result = _run(["/bin/sh", LAUNCHER, "--version"], env={"PATH": f"{bindir}:/usr/bin:/bin"})
     assert result.returncode == 0, result.stderr
     assert log.read_text().splitlines() == [f"-I {ROOT / 'bin' / '..' / 'main.py'} --version"]
+
+
+def test_launcher_checks_a_version_manager_shim_before_trusting_it(tmp_path: Path) -> None:
+    shims = tmp_path / ".pyenv" / "shims"
+    shims.mkdir(parents=True)
+    shim = shims / "python3.14"  # pyenv makes one for each installed version
+    shim.write_text('#!/bin/sh\necho "pyenv: python3.14: command not found" >&2\nexit 127\n')
+    shim.chmod(0o755)
+    real = str(Path(sys.executable).parent)
+    env = {"PATH": f"{shims}:{real}:/usr/bin:/bin"}
+    result = _run(["/bin/sh", LAUNCHER, "--version"], env=env)
+    assert result.returncode == 0, result.stderr
+    assert __version__ in result.stdout

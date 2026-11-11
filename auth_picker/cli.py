@@ -205,7 +205,7 @@ def _cmd_delete(args: argparse.Namespace) -> int:
         out(f"would delete {profile.label} ({profile.identity.describe()}); {where}")
         out("run again with --yes to delete it")
         return 1
-    app.profiles.delete(profile)
+    app.switcher.delete(profile)
     out(f"{args.kind}: deleted {profile.label}")
     badge.stamp(app)
     return 0

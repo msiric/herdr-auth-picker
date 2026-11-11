@@ -317,6 +317,27 @@ def test_claude_limits_list_is_read_whole() -> None:
     ]
 
 
+def test_a_per_model_window_without_a_name_is_still_per_model() -> None:
+    from auth_picker.usage import binding, parse_claude  # noqa: PLC0415
+
+    body = {
+        "limits": [
+            {"kind": "weekly_all", "percent": 20, "resets_at": NOW + 86400, "scope": None},
+            {
+                "kind": "weekly_scoped",
+                "percent": 90,
+                "resets_at": NOW + 86400,
+                "scope": {"model": {"id": None, "display_name": None}},
+            },
+        ]
+    }
+    windows = parse_claude(body, NOW)
+    assert [w.scope for w in windows] == [None, "model"]
+    chosen = binding(windows)
+    assert chosen is not None
+    assert chosen.percent == 20.0
+
+
 def _w(label: str, percent: float, resets: float = NOW + 3600, **kw: object) -> Window:
     return Window(label, percent, resets, **kw)  # type: ignore[arg-type]
 

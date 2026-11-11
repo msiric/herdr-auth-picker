@@ -374,6 +374,52 @@ def test_recovery_never_restores_a_profile_that_moved_on(world: World) -> None:
     assert world.profiles.store.get(world.profiles.find("claude", "A").key) is not None
 
 
+def test_deleting_the_outgoing_profile_after_a_crash_restores_its_login_first(
+    world: World,
+) -> None:
+    live = world.live()
+    a = world.profiles.find("claude", "A")
+    target = world.claude.parse_secret(Sensitive(claude_secret("bob")))
+    journal = Journal(
+        txid="crashed",
+        kind="claude",
+        phase="installing",
+        target_label="B",
+        target_fingerprint=target.fingerprint,
+        target_components=world.claude.components(target),
+        pre_fingerprint=live.fingerprint,
+        pre_components=world.claude.components(live),
+        store=store_tag(world.claude),
+        pre_profile=a.id,
+    )
+    world.journals.begin(journal, live.secret)
+    (world.home / ".claude" / ".credentials.json").write_text(json.dumps(claude_blob("bob")))
+    world.switcher.delete(a)  # A's profile is the only copy of the live login
+    assert world.journals.current(store_tag(world.claude)) is None
+    assert world.who() == "alice@example.com"
+    assert world.live().secret.reveal() == live.secret.reveal()
+
+
+def test_a_crash_after_the_undo_pointer_leaves_no_old_undo_copy(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    legacy = undo_key(store_tag(world.claude))
+    world.profiles.store.put(
+        legacy, world.claude.parse_secret(Sensitive(claude_secret("bob"))).secret
+    )
+    real_delete = world.profiles.store.delete
+
+    def crash(_key: str) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(world.profiles.store, "delete", crash)
+    with pytest.raises(KeyboardInterrupt):
+        world.switcher.switch("claude", "B")
+    monkeypatch.setattr(world.profiles.store, "delete", real_delete)
+    world.switcher.recover("claude")
+    assert world.profiles.store.get(legacy) is None
+
+
 def test_a_claude_switch_does_not_scan_processes(tmp_path: Path) -> None:
     w = World(tmp_path)
     w.log_in("alice")

@@ -159,6 +159,12 @@ def _claude_limits(limits: list[Any]) -> list[Window]:
         scope = entry.get("scope")
         model = scope.get("model") if isinstance(scope, dict) else None
         name = model.get("display_name") if isinstance(model, dict) else None
+        if not (isinstance(name, str) and name):
+            name = model.get("id") if isinstance(model, dict) else None
+        if not (isinstance(name, str) and name) and (
+            kind == "weekly_scoped" or isinstance(model, dict)
+        ):
+            name = "model"  # scoped, though the API did not say to what
         windows.append(
             Window(
                 label,

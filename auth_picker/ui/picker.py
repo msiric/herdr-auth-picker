@@ -304,7 +304,7 @@ class Picker:
         if not self.confirm(f"Delete {profile.label}? {note}"):
             return
         try:
-            self.app.profiles.delete(profile)
+            self.app.switcher.delete(profile)
         except AuthPickerError as exc:
             self.message = exc.message
             return

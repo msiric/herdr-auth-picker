@@ -212,6 +212,19 @@ class Switcher:
             email = snapshot.identity.email or snapshot.identity.account_id[:8]
             return self.profiles.create((name or f"rescued {email}")[:MAX_LABEL], snapshot), True
 
+    def delete(self, profile: Profile) -> None:
+        """Delete a profile, settling an interrupted switch first.
+
+        An open journal can name this profile as its pre-image: then the profile
+        holds the only copy of the login that was live, and recovery needs it.
+        """
+        backend = self.backends[profile.kind]
+        with self._store_locks(backend):
+            journal = self.journals.current(store_tag(backend))
+            if journal is not None:
+                self._resolve(backend, journal)
+            self.profiles.delete(profile)
+
     def recover(self, kind: str) -> str | None:
         """Finish or undo an interrupted switch. Returns what happened, if anything."""
         backend = self.backends[kind]
@@ -367,15 +380,16 @@ class Switcher:
         if journal.pre_profile:
             # Undo points at the outgoing profile, which keeps that account's
             # newest login from now on; no copy is written.
-            first = self._undo_pointer(journal.store) is None
+            # The copies kept up to 1.2.0 go first: once the pointer exists
+            # nothing else would ever look for them.
+            if self._undo_pointer(journal.store) is None:
+                kind = journal.store.split("-", 1)[0]
+                for key in (undo_key(journal.store), f"undo:{kind}"):
+                    self.store.delete(key)
             write_private(
                 self._undo_path(journal.store),
                 json.dumps({"profile_id": journal.pre_profile}).encode(),
             )
-            if first:
-                kind = journal.store.split("-", 1)[0]
-                for key in (undo_key(journal.store), f"undo:{kind}"):
-                    self.store.delete(key)  # the copies kept up to 1.2.0
         else:
             pre = self.journals.pre_secret(journal)
             if pre is not None:
