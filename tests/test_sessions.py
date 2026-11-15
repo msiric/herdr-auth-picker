@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import platform
 import shlex
 import signal
 from pathlib import Path
@@ -9,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from auth_picker import procscan, sessions
+from auth_picker import herdr, procscan, sessions
 from auth_picker.backends.claude import SLOT_VAR
 from auth_picker.sessions import SessionError, command_line, restart_argv
 from auth_picker.slots import Slots
@@ -136,11 +138,16 @@ def slots(world: World, clock: Clock) -> Slots:
 
 
 def install(monkeypatch: pytest.MonkeyPatch, pane: FakePane, parent: int = SHELL) -> None:
-    monkeypatch.setattr(sessions.herdr, "process_info", pane.info)
-    monkeypatch.setattr(sessions.herdr, "agent_of", pane.agent)
-    monkeypatch.setattr(sessions.herdr, "run_in_pane", pane.run)
-    monkeypatch.setattr(sessions.herdr, "send_keys", lambda _p, *k: pane.keys.extend(k) or True)
-    monkeypatch.setattr(sessions.os, "kill", pane.kill)
+    monkeypatch.setattr(herdr, "process_info", pane.info)
+    monkeypatch.setattr(herdr, "agent_of", pane.agent)
+    monkeypatch.setattr(herdr, "run_in_pane", pane.run)
+
+    def send_keys(_pane: str, *keys: str) -> bool:
+        pane.keys.extend(keys)
+        return True
+
+    monkeypatch.setattr(herdr, "send_keys", send_keys)
+    monkeypatch.setattr(os, "kill", pane.kill)
     monkeypatch.setattr(procscan, "parent_of", lambda _pid: parent)
     monkeypatch.setattr(procscan, "alive", lambda pid: bool(pane.claude and pane.claude[0] == pid))
     monkeypatch.setattr(procscan, "slot_of", pane.slot_of)
@@ -215,14 +222,14 @@ def test_without_slots_no_pane_is_looked_up(slots: Slots, monkeypatch: pytest.Mo
     def fail(_pane: str) -> None:
         raise AssertionError("looked up a pane")
 
-    monkeypatch.setattr(sessions.herdr, "process_info", fail)
+    monkeypatch.setattr(herdr, "process_info", fail)
     assert sessions.pane_accounts(slots, ["w1:p1"]) == {"w1:p1": None}
 
 
 def test_a_slot_dir_is_matched_whole_in_a_process_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(procscan.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
     monkeypatch.setattr(
         procscan, "_macos", lambda: iter([(7, "claude", "claude"), (8, "claude", "claude")])
     )
@@ -242,7 +249,7 @@ def test_a_failed_restart_keeps_the_slot_for_the_command_shown(
 ) -> None:
     pane = FakePane(["claude"])
     install(monkeypatch, pane)
-    monkeypatch.setattr(sessions.herdr, "run_in_pane", lambda _p, _c: True)  # nothing starts
+    monkeypatch.setattr(herdr, "run_in_pane", lambda _p, _c: True)  # nothing starts
     monkeypatch.setattr(sessions, "START_TIMEOUT_S", 0.0)
     b = world.profiles.find("claude", "B")
     with pytest.raises(SessionError, match="start it yourself"):
@@ -255,7 +262,7 @@ def test_a_failed_restart_keeps_the_slot_for_the_command_shown(
 def test_a_claude_whose_environment_is_hidden_counts_as_using_every_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(procscan.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
     monkeypatch.setattr(procscan, "_macos", lambda: iter([(9, "claude", "claude")]))
     monkeypatch.setattr(procscan, "_environ_macos", lambda _pids: {9: " claude "})
     assert procscan.slot_users(SLOT_VAR, ["/s/a", "/s/b"]) == {"/s/a": [9], "/s/b": [9]}
