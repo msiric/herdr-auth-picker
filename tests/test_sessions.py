@@ -152,6 +152,15 @@ def install(monkeypatch: pytest.MonkeyPatch, pane: FakePane, parent: int = SHELL
     monkeypatch.setattr(procscan, "alive", lambda pid: bool(pane.claude and pane.claude[0] == pid))
     monkeypatch.setattr(procscan, "slot_of", pane.slot_of)
     monkeypatch.setattr(sessions, "POLL_S", 0.0)
+    monkeypatch.setattr(sessions, "SETTLE_S", 0.0)
+
+
+def converse(world: World, *lines: str) -> None:
+    """Claude's saved transcript for SID."""
+    folder = world.home / ".claude" / "projects" / "-work"
+    folder.mkdir(parents=True, exist_ok=True)
+    body = lines or ('{"type":"user","message":{"content":"hi"}}',)
+    (folder / f"{SID}.jsonl").write_text("\n".join(body) + "\n")
 
 
 def test_a_session_moves_to_its_own_account_and_keeps_its_conversation(
@@ -159,6 +168,7 @@ def test_a_session_moves_to_its_own_account_and_keeps_its_conversation(
 ) -> None:
     pane = FakePane(["claude", "--model", "opus", "fix it"])
     install(monkeypatch, pane)
+    converse(world)
     b = world.profiles.find("claude", "B")
     moved = sessions.move(slots, "w1:p2", b)
     assert moved.status == "moved"
@@ -193,6 +203,7 @@ def test_moving_back_to_the_main_account_returns_the_slot(
     slots.release(b.id)
     pane = FakePane(["claude", "--resume", SID], env=directory)
     install(monkeypatch, pane)
+    converse(world)
     moved = sessions.move(slots, "w1:p2", None)
     assert pane.typed == [f" claude --resume {SID}"]
     assert moved.target == "the main account"
@@ -266,3 +277,29 @@ def test_a_claude_whose_environment_is_hidden_counts_as_using_every_slot(
     monkeypatch.setattr(procscan, "_macos", lambda: iter([(9, "claude", "claude")]))
     monkeypatch.setattr(procscan, "_environ_macos", lambda _pids: {9: " claude "})
     assert procscan.slot_users(SLOT_VAR, ["/s/a", "/s/b"]) == {"/s/a": [9], "/s/b": [9]}
+
+
+def test_a_session_with_nothing_said_yet_starts_fresh_on_the_account(
+    world: World, slots: Slots, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pane = FakePane(["claude", "--model", "opus"])
+    install(monkeypatch, pane)
+    converse(world, '{"type":"file-history-snapshot"}')  # written before any message
+    b = world.profiles.find("claude", "B")
+    moved = sessions.move(slots, "w1:p2", b)
+    directory = slots.directory(b.id)
+    assert pane.typed == [f" env {SLOT_VAR}={directory} {sessions.VISIBLE} claude --model opus"]
+    assert "started fresh" in moved.notes[0]
+
+
+def test_a_claude_that_exits_right_after_starting_is_a_failed_move(
+    world: World, slots: Slots, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pane = FakePane(["claude"])
+    install(monkeypatch, pane)
+    converse(world)
+    monkeypatch.setattr(procscan, "alive", lambda pid: pid == 200 and pane.claude is not None)
+    b = world.profiles.find("claude", "B")
+    with pytest.raises(SessionError, match="exited right after starting"):
+        sessions.move(slots, "w1:p2", b)
+    assert slots.tidy() == []  # its slot is held for a retry

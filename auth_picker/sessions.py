@@ -7,6 +7,7 @@ Its conversation is Claude's, on disk, and is not touched.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
@@ -94,6 +95,10 @@ AT_REST = ("idle", "done")
 EXIT_TIMEOUT_S = 10.0
 SHELL_TIMEOUT_S = 5.0
 START_TIMEOUT_S = 20.0
+# A restarted Claude must still run this long after it appears: one that
+# can't start (say, a conversation it can't find) exits within a second.
+SETTLE_S = 2.0
+MAX_TRANSCRIPT_SCAN = 64 * 1024 * 1024
 POLL_S = 0.2
 PANES_FILE = "panes.json"
 # How the picker learns which pane it was opened from.
@@ -114,6 +119,9 @@ class PaneSession:
     session_id: str
     status: str
     profile_id: str | None  # its slot's profile; None: the main store
+    # It has a saved conversation to resume. A session nobody has written to
+    # yet has none, and `--resume` would make Claude exit at once.
+    resumable: bool = True
 
 
 @dataclass
@@ -136,8 +144,29 @@ def _values(rest: list[str], i: int, count: int | str) -> int:
     return i
 
 
-def restart_argv(argv: list[str], session_id: str) -> tuple[list[str], list[str]]:
-    """The argv to start this session again, and what was left out (flag names only)."""
+def has_conversation(config_dir: str, session_id: str) -> bool:
+    """Claude saved at least one message of this session (``--resume`` can find it)."""
+    pattern = os.path.join(glob.escape(config_dir), "projects", "*", f"{session_id}.jsonl")
+    for path in glob.glob(pattern):
+        try:
+            with open(path, "rb") as handle:
+                seen = 0
+                for line in handle:
+                    seen += len(line)
+                    if b'"type":"user"' in line or b'"type":"assistant"' in line:
+                        return True
+                    if seen > MAX_TRANSCRIPT_SCAN:
+                        return True  # that much is a conversation
+        except OSError:
+            continue
+    return False
+
+
+def restart_argv(argv: list[str], session_id: str | None) -> tuple[list[str], list[str]]:
+    """The argv to start this session again, and what was left out (flag names only).
+
+    ``session_id`` None: it has no conversation yet, so it starts fresh.
+    """
     if not argv:
         raise SessionError("no-argv", "herdr did not say how this session was started")
     lead = 2 if os.path.basename(argv[0]) in ("node", "bun") and len(argv) > 1 else 1
@@ -171,7 +200,8 @@ def restart_argv(argv: list[str], session_id: str) -> tuple[list[str], list[str]
             "this session was started with an argument this can't retype safely "
             "(a control character or backslash); restart it yourself",
         )
-    return [*kept, "--resume", session_id], sorted(dropped)
+    resume = ["--resume", session_id] if session_id else []
+    return [*kept, *resume], sorted(dropped)
 
 
 # Claude under Node renames its process, which hides its environment from
@@ -231,7 +261,8 @@ def inspect(slots: Slots, pane_id: str) -> PaneSession:
     status = str(agent.get("agent_status") or "unknown")
     slot_dir = procscan.slot_of(pid, SLOT_VAR, slots.dirs())
     profile_id = slots.profile_of_dir(slot_dir) if slot_dir else None
-    return PaneSession(pane_id, pid, argv, shell, session_id, status, profile_id)
+    resumable = has_conversation(slots.backend.paths.config_dir, session_id)
+    return PaneSession(pane_id, pid, argv, shell, session_id, status, profile_id, resumable)
 
 
 def _wait(condition: Callable[[], Any], timeout: float) -> Any:
@@ -274,12 +305,19 @@ def _restart(
 
     def started() -> int | None:
         found = _claude_process(herdr.process_info(pane_id) or {})
-        return found[0] if found is not None and session.session_id in found[1] else None
+        if found is None or found[0] == session.pid:
+            return None
+        return found[0] if not session.resumable or session.session_id in found[1] else None
 
     pid: int | None = _wait(started, START_TIMEOUT_S)
     if not pid:
         raise SessionError(
             "no-start", f"the session did not start again; start it yourself:{command}"
+        )
+    if _wait(lambda: not procscan.alive(pid), SETTLE_S):
+        raise SessionError(
+            "exited",
+            f"Claude exited right after starting (see that pane); to try again:{command}",
         )
     if slot_dir is not None and procscan.slot_of(pid, SLOT_VAR, [slot_dir]) != slot_dir:
         raise SessionError(
@@ -306,7 +344,7 @@ def move(
     name = target.label if target is not None else "the main account"
     if session.profile_id == (target.id if target is not None else None):
         return Moved("already", name)
-    argv, dropped = restart_argv(session.argv, session.session_id)
+    argv, dropped = restart_argv(session.argv, session.session_id if session.resumable else None)
     if session.status not in AT_REST and not force:
         raise NeedsConfirmation(
             "session-working",
@@ -323,7 +361,7 @@ def move(
         raise
     if target is not None:
         slots.release(target.id)
-    notes = []
+    notes = [] if session.resumable else ["it had no conversation yet, so it started fresh"]
     if dropped:
         notes.append("not carried over: " + ", ".join(dropped))
     if target is not None:

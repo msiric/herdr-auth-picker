@@ -525,7 +525,10 @@ serialised against switches.
    `ps`; a Claude whose environment can't be seen counts as using every slot.
    The command starts with a space, to keep it out of shell history where that
    is set up.
-6. Wait for a Claude process with `--resume <id>` in that pane. If none comes,
+   A session with no saved message yet has nothing to resume (`--resume`
+   would make Claude exit at once), so it starts fresh with the same flags.
+6. Wait for a new Claude process (with `--resume <id>`, if resuming) in that
+   pane, and check it still runs 2 seconds later. If none comes, or it exits,
    say so, show the exact command to type, and hold the slot for 10 minutes so
    that command still finds it.
 7. Return the slot the session came from if nothing else uses it.
