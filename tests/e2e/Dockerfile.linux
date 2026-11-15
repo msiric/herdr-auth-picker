@@ -1,0 +1,7 @@
+# Throwaway image for tests/e2e/linux.sh (made-up logins only).
+FROM ubuntu:24.04
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 curl ca-certificates procps >/dev/null && rm -rf /var/lib/apt/lists/*
+RUN useradd -m tester
+USER tester
+RUN curl -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1 || true
+ENV PATH=/home/tester/.local/bin:$PATH

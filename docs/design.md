@@ -404,7 +404,7 @@ auto-commits or auto-restores a value the plugin didn't write.
 | V5 | ~~Does a running Claude session follow a Keychain swap?~~ **Yes** (2026-11-01, a running 2.1.303 session): after a switch to an account out of usage, its next message hit that account's weekly limit; after `undo`, the same session answered. | 10 ✔ |
 | V6 | ~~herdr working directory and state dir?~~ The working directory is the plugin root; state is `~/.local/state/herdr/plugins/<id>` (0755, which we tighten), and config is `~/.config/herdr/plugins/config/<id>`. | 7 ✔ |
 | V7 | ~~Do the usage endpoints accept an honest User-Agent?~~ **Yes** (2026-11-01): both answered with usage for `msiric-auth-picker/0.1.0`. | 10 ✔ |
-| V8 | Linux paths/behaviour: CI only, as there is no Linux machine here. | 4/10 |
+| V8 | ~~Linux paths/behaviour?~~ **Verified in a container** (2026-11-15): switch, undo, recovery, slots and `/proc` scanning with made-up logins; real Claude 2.1.325 reads `<slot>/.credentials.json`. herdr itself on Linux is untested (`tests/e2e/linux.sh`, `docs/e2e-checklist.md`). | 10 ✔ |
 
 ## 12. Testing
 

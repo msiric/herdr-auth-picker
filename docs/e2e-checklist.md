@@ -99,3 +99,19 @@ Tagged `v1.0.0-rc.1`. Promote to `v1.0.0` once V4 and V5 billing are confirmed.
 | independent review | four issues fixed: per-install Keychain namespace (with migration), store-keyed journals and undo, logins made outside saved with `:prev` plus `revert` and `rescue --adopt`, and Claude's fail-closed check for a credential not where its config says |
 | migration on this Mac | 22 items moved to the per-install service, all profiles read back |
 | final review | three passes of independent review; every finding fixed and covered by a test. Released as `v1.0.0`. |
+
+## Linux (2026-11-15, v1.4.0)
+
+There is no Linux machine here, and copying a real login into one would leave
+two live copies of it. So `tests/e2e/linux.sh` runs in a throwaway Ubuntu
+24.04 container (Python 3.12, arm64) with made-up logins and the real Claude
+Code 2.1.325. 18 of 18 checks pass:
+
+| check | result |
+|-------|--------|
+| save, switch, undo (Claude and Codex) | pass; `.credentials.json` stays 0600, the state dir is 0700, saved logins are 0600 files, no token outside them |
+| crash after the credential write | pass: `recover` commits it. The dead process's Claude lock dirs block every switch until they are stale (twice their stale period, about 2 minutes), as designed |
+| slot on Linux | pass: `<slot>/.credentials.json` 0600; a session in it is found through `/proc/<pid>/environ` and blocks switching every session to that account; `cleanup` returns its renewed login |
+| real Claude reads the slot | pass: a broken login in the slot fails with "OAuth session expired", an empty slot with "Not logged in"; the main credential file is untouched |
+
+V8 is verified to this extent; a desktop Linux with herdr itself is still untested.
