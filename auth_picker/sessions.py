@@ -261,7 +261,7 @@ def inspect(slots: Slots, pane_id: str) -> PaneSession:
     status = str(agent.get("agent_status") or "unknown")
     slot_dir = procscan.slot_of(pid, SLOT_VAR, slots.dirs())
     profile_id = slots.profile_of_dir(slot_dir) if slot_dir else None
-    resumable = has_conversation(slots.backend.paths.config_dir, session_id)
+    resumable = has_conversation(slots.claude_dir, session_id)
     return PaneSession(pane_id, pid, argv, shell, session_id, status, profile_id, resumable)
 
 

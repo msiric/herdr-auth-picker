@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from auth_picker import procscan
 from auth_picker.backends.base import Snapshot, canonical, secret_object, validate
-from auth_picker.backends.claude import SLOT_VAR, ClaudeSlot
+from auth_picker.backends.claude import SLOT_VAR, ClaudeBackend, ClaudeSlot
 from auth_picker.errors import AuthPickerError, ProcessFailed
 from auth_picker.fsutil import read_private, secure_dir, write_private
 from auth_picker.profiles import Profile, ProfileError
@@ -112,6 +112,13 @@ class Slots:
 
     def _drop(self, profile_id: str) -> None:
         self._write([s for s in self.all() if s.profile_id != profile_id])
+
+    @property
+    def claude_dir(self) -> str:
+        """Claude's config dir, where it keeps conversations."""
+        if not isinstance(self.backend, ClaudeBackend):
+            raise SlotError("slot-kind", "per-session accounts need Claude's own backend")
+        return self.backend.paths.config_dir
 
     def directory(self, profile_id: str) -> str:
         # Recomputed from the id every time: a path is never read from disk.
