@@ -388,6 +388,10 @@ auto-commits or auto-restores a value the plugin didn't write.
 | Anthropic: developers "may not collect, store, or intermediate Claude.ai credentials or session tokens" | code.claude.com legal-and-compliance |
 | `codex login` (0.163.0) revokes the refresh token of whatever login its CODEX_HOME held, even another account's | `openai/codex` @ `rust-v0.163.0` `cli/src/login.rs` (`clear_existing_auth_before_login`) |
 | `security -i` runs commands longer than about 4,090 characters in pieces, storing a truncated value; the `-w` prompt silently keeps only 128 characters | reproduced on throwaway and dummy items (found by the end-to-end run) |
+| `CLAUDE_SECURESTORAGE_CONFIG_DIR=<dir>` gives one Claude process its own login: Keychain service `Claude Code-credentials-<sha256(NFC dir)[:8]>` (macOS) or `<dir>/.credentials.json`, and its own refresh and storage-write locks in `<dir>`. Config, conversations and `oauthAccount` stay shared | Claude 2.1.322 binary (`k1`, `I6`); live test 2026-11-11 (§14) |
+| A Claude session in such a dir bills that dir's account (its usage moved, the main account's `/status` Usage tab did not), resumes shared conversations, renews its token only in the dir, and leaves `oauthAccount` and the main item untouched. `/status` still names the main account | live test 2026-11-11, Claude 2.1.322 |
+| Claude exits cleanly on SIGTERM: prints its resume hint, restores the terminal and stops its MCP servers | live test 2026-11-15 |
+| herdr 0.9.1: `pane process-info` lists foreground processes (pid, argv, cwd) and the shell pid; `agent list` gives a Claude pane's session id; plugin contexts carry `focused_pane_id`; `plugin pane open --env` passes it on; `send-keys ctrl+u` clears the shell's input line | herdr 0.9.1 CLI |
 
 ## 11. To verify in later phases
 
@@ -443,3 +447,113 @@ auto-commits or auto-restores a value the plugin didn't write.
 | 8 | Picker UI | manual run-through |
 | 9 | Usage (opt-in); resolve V7 | network guards tested with a local fake server |
 | 10 | Docs, SECURITY.md, manual E2E with real accounts, tag v1.0.0 | checklist signed off by you |
+
+## 14. Per-session accounts (Claude, v1.4)
+
+One Claude session can run on a different account than the rest. Codex has no
+per-process login, so this is Claude only.
+
+### Slots
+
+- The **main store** is the login every normally started session uses (§3).
+- A **slot** is a second store for one account: the directory
+  `<state>/slots/<profile id>` and the credential Claude derives from it (§10).
+  A session started with `CLAUDE_SECURESTORAGE_CONFIG_DIR=<slot dir>` uses it.
+  Every session pinned to that account shares the one slot.
+- `slots.json` in the state dir lists the slots: profile id, state (`lending`
+  or `lent`), when it was lent, and the pid moving a session into it, if any.
+  No secrets, and no paths: a slot's directory is always recomputed from its
+  profile id.
+
+### Exclusivity (I8)
+
+**I8 — An account is live in at most one store.** Two live copies of one login
+share a refresh-token chain: the first to renew spends the other's refresh
+token, and that copy is logged out. So:
+
+- pinning a session to the main store's account runs it on the main store
+  (no slot);
+- switching the main store to an account whose slot has sessions is refused,
+  naming them. With no sessions, the slot is returned first (below);
+- `next` skips accounts held by a slot with sessions; `delete` and `revert` of
+  a lent profile are refused while it has sessions.
+
+All slot changes happen under the main store's lock (§8), so they are
+serialised against switches.
+
+### Lending and returning
+
+- **Lend:** write `lending` to the index, write the profile's account keys
+  (§3) to the slot's credential, then mark it `lent`. An expired saved login is
+  refused, as in a switch. Machine keys (`mcpOAuth`) are not copied, so a pinned
+  session signs in to its MCP servers again.
+- **In use** means a running Claude process has the slot's directory in its
+  environment (procscan looks only for that exact assignment), or the process
+  moving a session into it is still alive and has not released it (its session
+  is starting). A mover releases the slot once the session runs or the move
+  fails; a crashed mover is dead, so its slot is free.
+- **Return** (no session uses it): under Claude's locks for the slot dir, read
+  its credential; it is the newest generation of that account (I1).
+  - It holds another profile's known tokens (`/login` with that account inside
+    the session): that profile already holds them, so they are not saved under
+    this one (T5), and the return reports it.
+  - Otherwise update the profile; its previous generation is kept for `revert`
+    (I6). Plan fields are not compared: Claude refreshes them itself.
+  - Then delete the credential, the index entry, and the directory, in that
+    order: the directory is recreated before locking if a crash removed it.
+
+  Every step is idempotent, so a crash is repaired by running it again;
+  `recover` (at herdr start), `cleanup` and each finished turn return idle
+  slots.
+
+### Moving a session
+
+`p` in the picker, or `auth-picker pin PANE NAME|main`:
+
+1. From herdr: the pane's foreground Claude process (pid, argv, cwd), its
+   session id and status. Refuse unless Claude is a direct child of the pane's
+   shell and was started interactively (`-p`, `--bg`, `-w`, `--tmux`,
+   `--remote-control` and similar are refused).
+2. If Claude is replying, ask first: a restart cuts the reply off.
+3. Lend the target (or choose the main store).
+4. SIGTERM the Claude process and wait for it to exit, then for the shell to be
+   the foreground process again.
+5. Clear the input line (`ctrl+u`) and type
+   `env CLAUDE_SECURESTORAGE_CONFIG_DIR=<dir> CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 <claude> <kept flags> --resume <id>`
+   (no `env` part for the main store). The second variable stops a Node-run
+   Claude renaming its process, which on macOS hides its environment from
+   `ps`; a Claude whose environment can't be seen counts as using every slot.
+   The command starts with a space, to keep it out of shell history where that
+   is set up.
+6. Wait for a Claude process with `--resume <id>` in that pane. If none comes,
+   say so, show the exact command to type, and hold the slot for 10 minutes so
+   that command still finds it.
+7. Return the slot the session came from if nothing else uses it.
+
+Kept flags are an allowlist (permission, model, effort, settings, plugin,
+tool and directory options). Flags that choose a session (`-c`, `-r`,
+`--session-id`, `--fork-session`) and prompt arguments are replaced by
+`--resume <id>`. Anything else is dropped and reported. Arguments with control
+characters or backslashes are refused: they can't be quoted the same way in
+every shell.
+
+### Badges
+
+A pane's account comes from its Claude process: its slot if it has one,
+otherwise the main store. `panes.json` caches pane → (pid, profile id), filled
+when a pane is detected or moved and dropped when the pid is gone. A pinned
+pane's badge is its profile's label with a `*`; the unsaved-login marker is
+`?`. `$usage` shows that account's usage, read after its turns like the main
+account's.
+
+### Limits
+
+- `CLAUDE_SECURESTORAGE_CONFIG_DIR` is undocumented; a Claude update can change
+  it, like the rest of §3.
+- Claude's `/status` shows the main account's name and email in a pinned
+  session; billing and usage follow the slot.
+- `/login` inside a pinned session is not supported. Logging in to another
+  saved account there is detected (above); logging in to an unknown one can't
+  be told apart from a renewal locally, and is undone with `revert`. It also
+  changes the shared `oauthAccount`, which the main store's checks catch.
+

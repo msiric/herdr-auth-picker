@@ -20,6 +20,7 @@ from auth_picker.secretstore import (
     adopt_legacy,
     default_store,
 )
+from auth_picker.slots import Slots
 from auth_picker.switch import Switcher, store_tag
 from auth_picker.usage import Usage
 
@@ -61,6 +62,7 @@ class App:
         journals = JournalStore(state, store)
         unmoved = [] if readonly else _adopt_legacy(state, store, profiles, journals, backends)
         switcher = Switcher(profiles, journals, lock_timeout=settings.lock_timeout_s)
+        switcher.slots = Slots(switcher)
         usage = Usage(state, settings.usage.ttl_s) if settings.usage.enabled else None
         return cls(settings, store, backends, profiles, journals, switcher, usage, error, unmoved)
 

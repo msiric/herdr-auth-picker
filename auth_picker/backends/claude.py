@@ -34,7 +34,7 @@ from auth_picker.errors import Conflict, StaleSnapshot
 from auth_picker.foreignlock import DirLock, Held, hold_all
 from auth_picker.fsutil import ForeignFile, read_foreign, touch, write_foreign
 from auth_picker.redact import Sensitive
-from auth_picker.secretstore.keychain import read_password, write_password
+from auth_picker.secretstore.keychain import delete_password, read_password, write_password
 
 TESTED_VERSIONS = ("2.1.309",)
 # Keys of the stored credential that belong to the account and move with a
@@ -119,6 +119,9 @@ class KeychainCredential:
         del expect
         write_password(self.service, self.account, Sensitive(data), self.keychain)
 
+    def delete(self) -> None:
+        delete_password(self.service, self.account, self.keychain)
+
 
 class FileCredential:
     """Claude's ``.credentials.json`` (Linux)."""
@@ -136,8 +139,77 @@ class FileCredential:
         except Conflict as exc:
             raise StaleSnapshot(exc.code, exc.message) from None
 
+    def delete(self) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(self.path)
+
 
 CredentialStore = KeychainCredential | FileCredential
+
+SLOT_VAR = "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+
+
+def slot_service(directory: str) -> str:
+    """The Keychain service Claude uses when SLOT_VAR is ``directory`` (design §10)."""
+    normalized = unicodedata.normalize("NFC", directory)
+    return "Claude Code-credentials-" + hashlib.sha256(normalized.encode()).hexdigest()[:8]
+
+
+class ClaudeSlot:
+    """A second Claude store for one account (design §14).
+
+    A Claude process started with SLOT_VAR set to ``directory`` keeps its login
+    here, with its own refresh and storage-write locks in ``directory``. Only
+    the account keys are kept: config and identity stay shared.
+    """
+
+    def __init__(self, directory: str, store: CredentialStore | None = None) -> None:
+        self.directory = directory
+        if store is None:
+            store = (
+                KeychainCredential(slot_service(directory), _user_name(dict(os.environ)))
+                if platform.system() == "Darwin"
+                else FileCredential(os.path.join(directory, ".credentials.json"))
+            )
+        self.store = store
+
+    def read(self) -> dict[str, Any] | None:
+        """The account keys Claude holds in the slot; None if it holds none."""
+        found = self.store.read()
+        if found is None:
+            return None
+        blob = load_json_object(found.data, "the slot's credential")
+        unknown = sorted(set(blob) - set(ACCOUNT_KEYS) - set(MACHINE_KEYS))
+        if unknown:
+            raise Unsupported(
+                "claude-layout",
+                "a slot's credential has keys this version does not know ("
+                + ", ".join(unknown)
+                + "); update auth-picker",
+            )
+        credentials = {k: blob[k] for k in ACCOUNT_KEYS if k in blob}
+        oauth = credentials.get("claudeAiOauth")
+        if not (isinstance(oauth, dict) and text(oauth, "refreshToken")):
+            return None  # Claude gave up on it (a failed renewal blanks the token)
+        return credentials
+
+    def write(self, credentials: dict[str, Any]) -> None:
+        self.store.write(json.dumps(credentials, separators=(",", ":")).encode(), None)
+
+    def delete(self) -> None:
+        self.store.delete()
+
+    def locks(self, timeout: float) -> contextlib.AbstractContextManager[Held]:
+        """Claude's own locks for this slot, so no session in it renews meanwhile."""
+        return hold_all(
+            [
+                DirLock(os.path.join(self.directory, ".oauth_refresh.lock"), stale_s=60),
+                DirLock(os.path.realpath(self.directory) + ".lock", stale_s=60),
+                DirLock(os.path.join(self.directory, ".storage-write.lock"), stale_s=15),
+            ],
+            timeout,
+            busy="a pinned Claude session is renewing its login",
+        )
 
 
 @dataclass(frozen=True)

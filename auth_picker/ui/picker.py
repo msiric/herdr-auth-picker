@@ -9,13 +9,14 @@ touches the credential store.
 from __future__ import annotations
 
 import contextlib
+import os
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from auth_picker import herdr, usage
+from auth_picker import badge, herdr, sessions, usage
 from auth_picker.app import App
 from auth_picker.backends import KINDS
 from auth_picker.backends.base import Unsupported
@@ -25,6 +26,10 @@ from auth_picker.switch import NeedsConfirmation, Outcome
 
 TITLES = {"claude": "Claude Code", "codex": "Codex"}
 HELP = "j/k move · enter switch · s save · r rename · x delete · u undo · d usage · q quit"
+HELP_PANE = (
+    "j/k move · enter switch all · p this session only · s save · r rename · x delete · "
+    "u undo · d usage · q quit"
+)
 REFRESH_MS = 3000
 POLL_BUSY_MS = 200
 
@@ -65,6 +70,19 @@ class Picker:
         self._lock = threading.Lock()
         self._workers: list[threading.Thread] = []
         self._writers: list[threading.Thread] = []
+        # The Claude pane the picker was opened from (design §14), and the
+        # profile id of the slot it runs in (None: the main account).
+        self.pane = os.environ.get(sessions.PANE_VAR) or None
+        self.pane_account: str | None = None
+        if self.pane and app.switcher.slots is not None:
+            self._background(self._read_pane_account)
+
+    def _read_pane_account(self) -> None:
+        slots = self.app.switcher.slots
+        if self.pane is None or slots is None:
+            return
+        with contextlib.suppress(AuthPickerError):
+            self.pane_account = sessions.pane_accounts(slots, [self.pane]).get(self.pane)
 
     # -- background work ---------------------------------------------------
     #
@@ -148,12 +166,17 @@ class Picker:
                 state = f"live: {identity.describe()} (not saved, press s)"
             if self.app.journals.rescues(kind):
                 state += " · ! needs attention, run status"
+            lent = self._lent() if kind == "claude" else set()
+            if kind == "claude" and self.pane:
+                mine = next((p.label for p in saved if p.id == self.pane_account), None)
+                state += f" · this session: {mine + badge.PINNED if mine else 'main account'}"
             rows.append(Row(kind, f"{TITLES[kind]} — {state}"))
             for p in saved:
+                name = p.label + (badge.PINNED if p.id in lent else "")
                 rows.append(
                     Row(
                         kind,
-                        f"{p.label}  {p.identity.describe()}{self._usage_text(p.fingerprint)}",
+                        f"{name}  {p.identity.describe()}{self._usage_text(p.fingerprint)}",
                         p,
                         p.fingerprint == live_print,
                     )
@@ -161,6 +184,14 @@ class Picker:
                 if self.details:
                     rows.extend(Row(kind, line, detail=True) for line in self._windows(p))
         return rows
+
+    def _lent(self) -> set[str]:
+        """Profiles lent to sessions of their own (from the index: no process scan)."""
+        slots = self.app.switcher.slots
+        try:
+            return {s.profile_id for s in slots.all()} if slots is not None else set()
+        except AuthPickerError:
+            return set()
 
     def _windows(self, profile: Profile) -> list[str]:
         if self.app.usage is None:
@@ -204,6 +235,8 @@ class Picker:
                 ),
                 f"switching to {label}…",
             )
+        elif key == "p" and row and row.profile and row.kind == "claude" and self.pane:
+            self._pin(row.profile, row.live)
         elif key == "u" and (kind := self._kind_here(rows)):
             self._undo(kind)
         elif key == "s" and (kind := self._kind_here(rows)):
@@ -215,6 +248,35 @@ class Picker:
         elif key == "d":
             self.details = not self.details
         return True
+
+    def _pin(self, profile: Profile, live: bool) -> None:
+        """Restart only the pane's session on ``profile`` (the main account if ``live``)."""
+        slots, pane = self.app.switcher.slots, self.pane
+        if slots is None or pane is None:
+            return
+        target = None if live else profile
+        name = "the main account" if target is None else profile.label
+        self.progress(f"moving this session to {name}…")
+        try:
+            try:
+                moved = sessions.move(slots, pane, target, progress=self.progress)
+            except NeedsConfirmation as exc:
+                if not self.confirm(exc.message + ". Move anyway?"):
+                    self.message = "not moved"
+                    return
+                moved = sessions.move(slots, pane, target, force=True, progress=self.progress)
+        except AuthPickerError as exc:
+            self.message = exc.message
+            return
+        if moved.status == "already":
+            self.message = f"this session already runs on {moved.target}"
+            return
+        self.pane_account = target.id if target is not None else None
+        joined = "; ".join(moved.notes)
+        self.message = f"this session now runs on {moved.target}" + (
+            f" ({joined})" if joined else ""
+        )
+        herdr.stamp_soon()
 
     def _undo(self, kind: str) -> None:
         self._attempt(lambda force: self.app.switcher.undo(kind, force=force), "switching back…")
@@ -335,7 +397,7 @@ def draw(screen: Screen, picker: Picker, rows: list[Row], attrs: dict[str, int])
                 screen.addnstr(y, 0, text.ljust(width - 1), width - 1, attr)
 
     put(0, "ACCOUNTS", attrs.get("bold", 0))
-    put(1, HELP, attrs.get("dim", 0))
+    put(1, HELP_PANE if picker.pane else HELP, attrs.get("dim", 0))
     selected = picker.selected(rows)
     y = 3
     for row in rows:

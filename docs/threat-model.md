@@ -49,6 +49,9 @@ logged in on one machine, from inside herdr.
 | T13 | Information leaks through herdr logs, notifications or tracebacks | Typed errors that carry no secret data, one top-level handler, a redaction filter. Notifications carry labels, not emails, by default. (D-OBS) |
 | T14 | Orphaned background processes, or config that runs code from the mutable state dir | No detached processes. No symlink in the state dir that config executes. (D-HERDR) |
 | T15 | Supply chain | Standard library only. Install pinned to a commit SHA. CI on every change. Signed tags later. |
+| T16 | One account live in two stores (main and a session's slot): the first to renew spends the other's refresh token | I8: a slot exists only for an account the main store doesn't hold; switches, undo, `next`, delete, revert and adopt return an idle slot first or refuse. All slot changes run under the main store's lock. (design §14) |
+| T17 | Moving a session types a command into the user's shell: wrong pane state, injection through quoting, or killing the wrong process | Only a Claude process that is a direct child of the pane's shell is stopped, checked again right before SIGTERM. The command is typed only once the shell is the sole foreground process, after `ctrl+u`. Arguments come from an allowlist and are POSIX-quoted; control characters and backslashes are refused (they quote differently in fish). The slot path is ours. No secret is ever typed. (design §14) |
+| T18 | A slot's login is put back under the wrong profile (`/login` with another account inside a pinned session) | On return, a slot holding another profile's known tokens is not saved under this one. Otherwise the profile is updated and its previous generation kept for `revert`. Residual: a `/login` to an unknown account can't be told apart from a renewal locally; documented as unsupported. (design §14) |
 
 ## 4. Residual risks (accepted, documented)
 
@@ -60,6 +63,8 @@ logged in on one machine, from inside herdr.
   storage layout are private, and any CLI release can change them. We pin the
   tested versions and refuse unknown shapes.
 - The usage endpoints are undocumented and may change or be restricted.
+- Per-session accounts rely on `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which Claude
+  does not document; an update can change it (verified on 2.1.322 and 2.1.325).
 - Using a third-party tool to swap subscription logins is a policy grey zone, even
   without touching token endpoints.
 

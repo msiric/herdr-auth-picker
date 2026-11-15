@@ -17,7 +17,7 @@ import traceback
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from auth_picker import __version__, badge, herdr, migrate
+from auth_picker import __version__, badge, herdr, migrate, sessions
 from auth_picker.app import App
 from auth_picker.backends import KINDS
 from auth_picker.backends.base import Unsupported
@@ -31,6 +31,7 @@ Handler = Callable[[argparse.Namespace], int]
 EXIT_INTERNAL = 70
 EXIT_INTERRUPTED = 130
 TITLES = {"claude": "Claude Code", "codex": "Codex"}
+MAIN = "main"
 
 
 def out(text: str) -> None:
@@ -211,6 +212,26 @@ def _cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_pin(args: argparse.Namespace) -> int:
+    app = _app(args)
+    slots = app.switcher.slots
+    pane = args.pane or herdr.focused_pane()
+    if slots is None or not pane:
+        raise AuthPickerError("which-pane", "say which pane (herdr pane ids, e.g. w1:p3)")
+    target = None if args.name == MAIN else app.profiles.find("claude", args.name)
+    moved = sessions.move(slots, pane, target, force=args.force)
+    if moved.status == "already":
+        out(f"claude: that session already runs on {moved.target}")
+        return 0
+    out(f"claude: that session now runs on {moved.target}")
+    for note in moved.notes:
+        out(f"  note: {note}")
+    badge.stamp(app)
+    if herdr.invoked_by_herdr():
+        herdr.notify(f"Claude Code: one session on {moved.target}", "; ".join(moved.notes))
+    return 0
+
+
 def _cmd_revert(args: argparse.Namespace) -> int:
     app = _app(args)
     profile = app.profiles.find(args.kind, args.name)
@@ -220,7 +241,7 @@ def _cmd_revert(args: argparse.Namespace) -> int:
             "run again with --yes"
         )
         return 1
-    app.profiles.revert(profile)
+    app.switcher.revert(profile)
     out(f"{args.kind}: {profile.label} holds its previous login again (the newer one is kept)")
     return 0
 
@@ -266,6 +287,7 @@ def _cmd_rescue(args: argparse.Namespace) -> int:
 
 def _cmd_cleanup(args: argparse.Namespace) -> int:
     app = _app(args)
+    _tidy_slots(app)
     with app.profiles.locked():
         orphans = app.profiles.orphans()
         if not orphans:
@@ -293,8 +315,20 @@ def _cmd_recover(args: argparse.Namespace) -> int:
             out(f"{kind}: an interrupted switch was {result}")
             if result == "rescued":
                 herdr.notify(f"{TITLES[kind]}: needs attention", "run the status action")
+    _tidy_slots(app)
     badge.stamp(app)
     return 0
+
+
+def _tidy_slots(app: App) -> None:
+    """Return own-account slots no session uses any more (design §14)."""
+    if app.switcher.slots is None:
+        return
+    try:
+        for message in app.switcher.slots.tidy():
+            out(f"claude: {message}")
+    except AuthPickerError as exc:
+        out(f"claude: {exc.message}")
 
 
 def _cmd_badge(args: argparse.Namespace) -> int:
@@ -316,7 +350,9 @@ def _cmd_ui(args: argparse.Namespace) -> int:
 
 def _cmd_open(args: argparse.Namespace) -> int:
     del args  # opens at once; herdr's events keep the badges current
-    if not herdr.open_pane("picker"):
+    pane = herdr.focused_pane()
+    env = {sessions.PANE_VAR: pane} if pane and herdr.focused_kind() == "claude" else {}
+    if not herdr.open_pane("picker", env):
         raise AuthPickerError("open", "herdr could not open the picker")
     return 0
 
@@ -367,15 +403,28 @@ def _cmd_event(args: argparse.Namespace) -> int:
     if status is not None and status != "idle":
         return 0  # usage only moves when a turn ends
     app = App.load()
-    if status == "idle" and app.usage is not None:
-        with contextlib.suppress(AuthPickerError):
-            live = app.backends[kind].read_live()
-            if live is not None:
-                app.usage.refresh(live)  # at most once per ttl_s, one process at a time
+    if status == "idle":
+        if app.usage is not None:
+            with contextlib.suppress(AuthPickerError):
+                for snapshot in _usage_snapshots(app, kind, pane):
+                    app.usage.refresh(snapshot)  # at most once per ttl_s per account
+        _tidy_slots(app)
         badge.stamp(app)
     else:
-        badge.stamp(app, {pane})
+        badge.stamp(app, {pane}, fresh=frozenset({pane}))
     return 0
+
+
+def _usage_snapshots(app: App, kind: str, pane: str) -> list[Any]:
+    """The logins whose usage a finished turn in ``pane`` may have moved."""
+    slots = app.switcher.slots
+    if kind == "claude" and slots is not None and slots.dirs():
+        profile_id = sessions.pane_accounts(slots, [pane]).get(pane)
+        if profile_id is not None:
+            pinned = slots.snapshot(profile_id)
+            return [pinned] if pinned is not None else []
+    live = app.backends[kind].read_live()
+    return [live] if live is not None else []
 
 
 def _cmd_stamp(args: argparse.Namespace) -> int:
@@ -425,6 +474,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         out(f"config error, other commands will refuse to run: {app.config_error}")
     for kind in KINDS:
         _status_kind(app, kind)
+    _status_slots(app)
     for key in app.unmoved:
         out(
             f"note: {key} could not yet be moved to this install's keychain items; "
@@ -435,6 +485,29 @@ def _cmd_status(args: argparse.Namespace) -> int:
             f"note: unreferenced saved secret {orphan} (left by an interrupted save; see `cleanup`)"
         )
     return 0
+
+
+def _status_slots(app: App) -> None:
+    slots = app.switcher.slots
+    if slots is None:
+        return
+    try:
+        listed = slots.all()
+        users = slots.users() if listed else {}
+    except AuthPickerError as exc:
+        out(f"Claude sessions on their own account: unknown ({exc.message})")
+        return
+    if not listed:
+        return
+    out("Claude sessions on their own account:")
+    names = {p.id: p.label for p in app.profiles.of_kind("claude")}
+    for slot in listed:
+        count = len(users.get(slot.profile_id, []))
+        label = names.get(slot.profile_id, "a deleted profile")
+        state = f"{count} session(s)" if count else "none now; closed at the next cleanup"
+        if slot.state != "lent":
+            state = "unfinished; closed at the next cleanup"
+        out(f"  {label + badge.PINNED:<20} {state}")
 
 
 def _cmd_import_legacy(args: argparse.Namespace) -> int:
@@ -491,6 +564,15 @@ def _switching_commands(commands: Commands) -> None:
     _add(commands, "status", _cmd_status, "show what is logged in, saved, and needs attention")
     _add(commands, "ui", _cmd_ui, "the account picker (herdr runs this in an overlay)")
     _add(commands, "open", _cmd_open, "open the account picker in herdr")
+    sub = _add(
+        commands,
+        "pin",
+        _cmd_pin,
+        "restart one Claude session on another account, keeping its conversation",
+    )
+    sub.add_argument("pane", nargs="?", help="herdr pane id (default: the focused pane)")
+    sub.add_argument("name", help=f"a saved Claude login, or {MAIN!r} for the main account")
+    sub.add_argument("--force", action="store_true", help="even if it is replying (cuts it off)")
     sub = _add(commands, "save", _cmd_save, "save the live login(s) as a profile")
     _kind_arg(sub)
     sub.add_argument("--name", help="what to call it (default: from the account)")

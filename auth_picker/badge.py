@@ -9,11 +9,14 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 
-from auth_picker import herdr, usage
+from auth_picker import herdr, sessions, usage
 from auth_picker.app import App
+from auth_picker.errors import AuthPickerError
 
 SHORT = {"claude": "Claude", "codex": "Codex"}
-UNSAVED = "*"
+UNSAVED = "?"
+# A session pinned to an account of its own (design §14).
+PINNED = "*"
 
 
 def label_for(app: App, kind: str) -> str | None:
@@ -57,18 +60,21 @@ def line(app: App, kinds: Sequence[str]) -> str:
 USAGE_TOKENS = (herdr.USAGE_FIELD, "usage_5h", "usage_wk")
 
 
-def usage_tokens(app: App, kind: str) -> dict[str, str]:
-    """$usage (per usage.style), $usage_5h and $usage_wk for the live account.
+def usage_tokens(app: App, kind: str, fingerprint: str | None = None) -> dict[str, str]:
+    """$usage (per usage.style), $usage_5h and $usage_wk for one account.
 
-    From the cache only: no network, no secrets. Empty values mean "clear it".
+    The live account's unless ``fingerprint`` names another. From the cache
+    only: no network, no secrets. Empty values mean "clear it".
     """
     empty = dict.fromkeys(USAGE_TOKENS, "")
     if app.usage is None:
         return empty
-    identity = app.backends[kind].live_identity()
-    if identity is None:
-        return empty
-    reading = app.usage.cached().get(identity.fingerprint(kind))
+    if fingerprint is None:
+        identity = app.backends[kind].live_identity()
+        if identity is None:
+            return empty
+        fingerprint = identity.fingerprint(kind)
+    reading = app.usage.cached().get(fingerprint)
     now, ttl = time.time(), app.config.usage.ttl_s
     return {
         herdr.USAGE_FIELD: usage.compact(reading, now, ttl, app.config.usage.style),
@@ -81,23 +87,40 @@ def usage_token(app: App, kind: str) -> str:
     return usage_tokens(app, kind)[herdr.USAGE_FIELD]
 
 
-def stamp(app: App, panes: set[str] | None = None) -> None:
+def stamp(app: App, panes: set[str] | None = None, fresh: frozenset[str] = frozenset()) -> None:
     """Put $acct (and $usage, if usage is on) on Claude/Codex panes herdr knows.
 
-    ``panes`` limits it to those pane ids. Reads no secrets and no network.
+    ``panes`` limits it to those pane ids; ``fresh`` are panes whose Claude
+    may have just started, so which account it runs on is looked up again.
+    Reads no secrets and no network.
     """
     if not app.config.badge:
         return
     labels = {kind: label_for(app, kind) for kind in app.backends}
     used = {kind: usage_tokens(app, kind) for kind in app.backends}
-    for agent in herdr.agents():
-        kind = herdr.kind_of_agent(agent)
-        pane = agent["pane_id"]
-        if kind is None or (panes is not None and pane not in panes):
-            continue
-        mine = used[kind]
+    agents = [
+        (agent["pane_id"], kind)
+        for agent in herdr.agents()
+        if (kind := herdr.kind_of_agent(agent)) is not None
+        and (panes is None or agent["pane_id"] in panes)
+    ]
+    pinned: dict[str, str | None] = {}
+    slots = app.switcher.slots
+    if slots is not None:
+        claude = [pane for pane, kind in agents if kind == "claude"]
+        try:
+            pinned = sessions.pane_accounts(slots, claude, fresh)
+        except AuthPickerError:
+            pinned = {}
+    for pane, kind in agents:
+        mine, label = used[kind], labels.get(kind)
+        profile_id = pinned.get(pane)
+        if profile_id is not None:
+            profile = next((p for p in app.profiles.all() if p.id == profile_id), None)
+            if profile is not None:
+                label = profile.label + PINNED
+                mine = usage_tokens(app, kind, profile.fingerprint)
         tokens = {name: value for name, value in mine.items() if value}
-        label = labels.get(kind)
         if label:
             tokens[herdr.BADGE_FIELD] = render(
                 app.config.badge_format, app.config.glyph, label, kind, mine[herdr.USAGE_FIELD]

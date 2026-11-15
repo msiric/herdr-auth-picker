@@ -53,14 +53,50 @@ def kind_of_agent(agent: dict[str, Any]) -> str | None:
     return next((kind for kind in ("claude", "codex") if kind in label), None)
 
 
-def focused_kind() -> str | None:
-    """The agent kind of the pane herdr says is focused, if it is one we handle."""
+def _context() -> dict[str, Any]:
     try:
         context = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
     except ValueError:
-        return None
-    agent = context.get("focused_pane_agent") if isinstance(context, dict) else None
+        return {}
+    return context if isinstance(context, dict) else {}
+
+
+def focused_kind() -> str | None:
+    """The agent kind of the pane herdr says is focused, if it is one we handle."""
+    agent = _context().get("focused_pane_agent")
     return kind_of_agent({"agent": agent}) if isinstance(agent, str) else None
+
+
+def focused_pane() -> str | None:
+    pane = _context().get("focused_pane_id")
+    return pane if isinstance(pane, str) and pane else None
+
+
+def agent_of(pane_id: str) -> dict[str, Any] | None:
+    return next((a for a in agents() if a["pane_id"] == pane_id), None)
+
+
+def process_info(pane_id: str) -> dict[str, Any] | None:
+    """{"shell_pid", "foreground_processes": [{"pid", "argv", "cwd", ...}]}, or None."""
+    result = _run("pane", "process-info", "--pane", pane_id)
+    if result is None or not result.ok:
+        return None
+    try:
+        info = json.loads(result.stdout)["result"]["process_info"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return info if isinstance(info, dict) else None
+
+
+def send_keys(pane_id: str, *keys: str) -> bool:
+    result = _run("pane", "send-keys", pane_id, *keys)
+    return result is not None and result.ok
+
+
+def run_in_pane(pane_id: str, command: str) -> bool:
+    """Type ``command`` into the pane's shell and press enter."""
+    result = _run("pane", "run", pane_id, command)
+    return result is not None and result.ok
 
 
 def report(pane_id: str, tokens: dict[str, str], clear: tuple[str, ...] = ()) -> None:
@@ -102,16 +138,10 @@ def notify(title: str, body: str = "") -> None:
     _run(*args)
 
 
-def open_pane(entrypoint: str) -> bool:
-    result = _run(
-        "plugin",
-        "pane",
-        "open",
-        "--plugin",
-        paths.PLUGIN_ID,
-        "--entrypoint",
-        entrypoint,
-        "--placement",
-        "overlay",
-    )
+def open_pane(entrypoint: str, env: dict[str, str] | None = None) -> bool:
+    args = ["plugin", "pane", "open", "--plugin", paths.PLUGIN_ID, "--entrypoint", entrypoint]
+    args += ["--placement", "overlay"]
+    for name, value in (env or {}).items():
+        args += ["--env", f"{name}={value}"]
+    result = _run(*args)
     return result is not None and result.ok

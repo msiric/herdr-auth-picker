@@ -88,7 +88,7 @@ def test_badge_never_reads_the_keychain(world: World, monkeypatch: pytest.Monkey
     app: App = world.app  # type: ignore[attr-defined]
     assert badge.line(app, ["claude"]) == "👤 Work"
     world.log_in("carol")
-    assert badge.line(app, ["claude"]) == "👤 carol*"
+    assert badge.line(app, ["claude"]) == "👤 carol?"
 
 
 def test_badge_format_is_literal(world: World) -> None:
@@ -287,7 +287,7 @@ def test_a_finished_turn_reads_usage_and_restamps(
             return Reading()
 
     app.usage = FakeUsage(str(world.root / "state"), 300)
-    monkeypatch.setattr(badge, "stamp", lambda _app, panes=None: stamped.append(panes))
+    monkeypatch.setattr(badge, "stamp", lambda _app, panes=None, **_: stamped.append(panes))
     _event(monkeypatch, "claude", "idle")
     assert run(capsys, "event")[0] == 0
     assert refreshed == [world.live().fingerprint]

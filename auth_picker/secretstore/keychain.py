@@ -128,22 +128,7 @@ class KeychainStore:
             self._delete_account(f"{key}.{manifest.get('g')}.{n}")
 
     def _delete_account(self, account: str) -> bool:
-        result = proc.run(
-            [
-                SECURITY,
-                "delete-generic-password",
-                "-s",
-                self.service,
-                "-a",
-                account,
-                *self._target(),
-            ]
-        )
-        if result.returncode == ITEM_NOT_FOUND:
-            return False
-        if not result.ok:
-            raise KeychainError("keychain-delete", f"keychain refused to delete {account}")
-        return True
+        return delete_password(self.service, account, self.keychain)
 
     def delete(self, key: str) -> bool:
         manifest = None
@@ -196,6 +181,26 @@ def read_password(service: str, account: str, keychain: str | None = None) -> Se
         )
     data = result.stdout
     return Sensitive(data[:-1] if data.endswith(b"\n") else data)
+
+
+def delete_password(service: str, account: str, keychain: str | None = None) -> bool:
+    """Delete one item. False if there was none."""
+    result = proc.run(
+        [
+            SECURITY,
+            "delete-generic-password",
+            "-s",
+            service,
+            "-a",
+            account,
+            *([keychain] if keychain else []),
+        ]
+    )
+    if result.returncode == ITEM_NOT_FOUND:
+        return False
+    if not result.ok:
+        raise KeychainError("keychain-delete", f"keychain refused to delete {account}")
+    return True
 
 
 def _quoted(value: str) -> str:

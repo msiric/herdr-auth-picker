@@ -93,6 +93,109 @@ def _pinned_linux(pids: list[int]) -> int:
     return count
 
 
+def _environ_macos(pids: list[int]) -> dict[int, str]:
+    """``ps -E`` lines: the command, then the environment, space-separated."""
+    shown = proc.run([PS, "-E", "-ww", "-o", "pid=,command=", "-p", ",".join(map(str, pids))])
+    lines: dict[int, str] = {}
+    for line in shown.stdout.decode("utf-8", "replace").splitlines():
+        pid, _, rest = line.strip().partition(" ")
+        if pid.isdigit():
+            lines[int(pid)] = " " + rest + " "
+    return lines
+
+
+def _uses_macos(line: str, assignment: str) -> bool:
+    return f" {assignment} " in line
+
+
+def _environment_shown(line: str) -> bool:
+    """False when ``ps -E`` shows no environment for a process.
+
+    A Node-run Claude renames its process (``process.title``), which on macOS
+    overwrites the memory ``ps`` reads its arguments and environment from.
+    Such a process could be in any slot, so callers must not assume it isn't.
+    """
+    return " PATH=" in line or " HOME=" in line
+
+
+def _environ_linux(pid: int) -> bytes | None:
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            return b"\0" + handle.read() + b"\0"
+    except OSError:
+        return None
+
+
+def slot_users(var: str, dirs: list[str]) -> dict[str, list[int]]:
+    """Running Claude processes with ``var`` set to each of ``dirs`` (design §14).
+
+    Only exact ``var=<dir>`` assignments are looked for; nothing else in any
+    environment is kept. A process whose environment can't be seen counts for
+    every dir (fail closed). Raises ProcessFailed/OSError if it cannot tell.
+    """
+    found: dict[str, list[int]] = {d: [] for d in dirs}
+    if not dirs:
+        return found
+    mac = platform.system() == "Darwin"
+    pids = [
+        pid
+        for pid, argv0, args in (_macos() if mac else _linux())
+        if kind_of(argv0, args) == "claude" and pid != os.getpid()
+    ]
+    if not pids:
+        return found
+    if mac:
+        lines = _environ_macos(pids)
+        for pid, line in lines.items():
+            for d in dirs:
+                if _uses_macos(line, f"{var}={d}") or not _environment_shown(line):
+                    found[d].append(pid)
+    else:
+        for pid in pids:
+            environ = _environ_linux(pid)
+            for d in dirs:
+                if environ is not None and f"\0{var}={d}\0".encode() in environ:
+                    found[d].append(pid)
+    return found
+
+
+def slot_of(pid: int, var: str, dirs: list[str]) -> str | None:
+    """Which of ``dirs`` one process has ``var`` set to, if any. Fails soft."""
+    if not dirs:
+        return None
+    try:
+        if platform.system() == "Darwin":
+            line = _environ_macos([pid]).get(pid, "")
+            return next((d for d in dirs if _uses_macos(line, f"{var}={d}")), None)
+        environ = _environ_linux(pid) or b""
+        return next((d for d in dirs if f"\0{var}={d}\0".encode() in environ), None)
+    except (OSError, ProcessFailed):
+        return None
+
+
+def parent_of(pid: int) -> int | None:
+    try:
+        if platform.system() == "Darwin":
+            shown = proc.run([PS, "-o", "ppid=", "-p", str(pid)])
+            value = shown.stdout.decode().strip()
+        else:
+            with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as handle:
+                value = handle.read().rsplit(")", 1)[1].split()[1]
+    except (OSError, ProcessFailed, IndexError):
+        return None
+    return int(value) if value.isdigit() else None
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def sessions(kind: str) -> Sessions:
     """Count this user's running sessions of ``kind``. Fails soft: unknown is zero."""
     mac = platform.system() == "Darwin"

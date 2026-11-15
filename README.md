@@ -103,7 +103,7 @@ description = "accounts: switch back"
 
 | key | action | does |
 |-----|--------|------|
-| `prefix+a` | `open` | the picker: `j`/`k` move, `enter` switch, `s` save, `r` rename, `x` delete, `u` undo, `d` every usage window, `q` close |
+| `prefix+a` | `open` | the picker: `j`/`k` move, `enter` switch, `p` this session only (from a Claude pane), `s` save, `r` rename, `x` delete, `u` undo, `d` every usage window, `q` close |
 | `prefix+shift+a` | `next` | switch the focused pane's tool (Claude or Codex) to its next saved account |
 | `prefix+u` | `undo` | switch back to the account you were on before the last switch; press again to toggle back |
 
@@ -114,8 +114,31 @@ from a shell: `herdr plugin action invoke msiric.auth-picker.save`.
 Every action is also a command: `bin/auth-picker` in the plugin directory
 finds a Python 3.11 or newer for you (set `AUTH_PICKER_PYTHON` to choose one).
 `bin/auth-picker --help` lists them, and
-`switch`, `rename`, `delete`, `rescue`, `usage` and `import-legacy` are
+`switch`, `pin`, `rename`, `delete`, `rescue`, `usage` and `import-legacy` are
 available only this way.
+
+### One session on another account (Claude)
+
+A switch moves every session. To move just one, open the picker from that
+Claude pane and press `p` on the account you want. The session restarts in
+place on that account, with the same conversation (`claude --resume`), and its
+badge shows the account with a `*` (`ms25*`). `p` on the main account (`●`)
+moves it back. From a shell: `bin/auth-picker pin PANE NAME`, or `main`.
+
+- The session is restarted: a reply in progress is cut off, so the picker asks
+  first. The flags it was started with are kept when they set the session up
+  (model, permission mode, settings, directories, tools); anything else is
+  dropped and listed.
+- An account is live in one place at a time, because two copies of a login
+  spend each other's tokens. So switching every session to an account a
+  pinned session uses is refused until you move that session back or close
+  it, and `next` skips that account.
+- A pinned session signs in to its MCP servers again, and Claude's `/status`
+  still names the main account. Billing and usage are the pinned account's.
+- When the last session on an account closes or moves back, its login (renewed
+  meanwhile) goes back to its profile. Sessions that just exit are tidied at
+  the next finished turn, at herdr start, or with `cleanup`.
+- Codex can't do this: it has no per-session login.
 
 ### The badge
 
@@ -177,8 +200,9 @@ tab_bar_right = [
 ```
 
 With `badge_format = "{glyph} {label} {usage}"` it reads
-`Claude 👤 work 42% · Codex 👤 work 3%`. `name*` means a login no profile
-holds, and `!` means something needs attention (see `status`).
+`Claude 👤 work 42% · Codex 👤 work 3%`. `name?` means a login no profile
+holds, `name*` a session on an account of its own, and `!` means something
+needs attention (see `status`).
 
 ## Settings
 
@@ -206,7 +230,8 @@ bad values are errors that `status` reports, never silently ignored.
 | Claude's locks | `~/.claude/.oauth_refresh.lock`, `~/.claude.lock`, `~/.claude/.storage-write.lock`, `~/.claude.json.lock`, held only during a switch |
 | Codex login | `$CODEX_HOME/auth.json` (default `~/.codex`), with `auth.json.lock` held while writing |
 | saved logins | Keychain service `msiric.auth-picker.<install id>`, one per state directory (macOS); `<state dir>/secrets/` (Linux) |
-| state, no secrets | `~/.local/state/herdr/plugins/msiric.auth-picker/`: profile index, switch journal, rescues, usage cache |
+| state, no secrets | `~/.local/state/herdr/plugins/msiric.auth-picker/`: profile index, switch journal, rescues, usage cache, sessions on their own account (`slots.json`, `panes.json`) |
+| a session's own account | Keychain `Claude Code-credentials-<hash>` (macOS) or `slots/<id>/.credentials.json` (Linux), for the slot directory `slots/<profile id>` in the state directory; started with `CLAUDE_SECURESTORAGE_CONFIG_DIR` set to it, and removed when no session uses it |
 | switch lock | `~/.local/state/msiric.auth-picker/locks/` |
 
 ## When something needs attention
@@ -251,6 +276,12 @@ directories, which the import lists: they hold logins in plaintext.
 ## Limits
 
 - Running Claude sessions follow a switch on their next request (verified).
+  A session on an account of its own relies on `CLAUDE_SECURESTORAGE_CONFIG_DIR`,
+  which Claude does not document (verified on 2.1.322 and 2.1.325).
+  With Claude installed through npm on macOS, a session started normally hides
+  its environment, so the plugin can't tell which account it uses: while one
+  runs, accounts lent to sessions are kept, and switching every session to
+  one of them is refused. The native install (the default) is not affected.
   Running Codex sessions follow only once Codex's background server restarts,
   which the plugin offers to do right after the switch.
 - Credential layouts are the CLIs' private business. Unknown shapes are

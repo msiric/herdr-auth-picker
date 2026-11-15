@@ -16,7 +16,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from auth_picker import paths, procscan
 from auth_picker.backends.base import Backend, Snapshot, validate
@@ -27,6 +27,9 @@ from auth_picker.journal import Journal, JournalStore
 from auth_picker.lock import FileLock
 from auth_picker.profiles import MAX_LABEL, Profile, ProfileError, Profiles, secret_hash
 from auth_picker.redact import Sensitive
+
+if TYPE_CHECKING:
+    from auth_picker.slots import Slots
 
 # A token this close to expiry may be renewed by a running session any moment.
 RENEWAL_WINDOW_S = 600
@@ -73,6 +76,8 @@ class Switcher:
         self.scan = scan
         self.clock = clock
         self.store_lock_path = store_lock_path
+        # Per-session slots (design §14); set by App. None: there are none.
+        self.slots: Slots | None = None
 
     # -- public ------------------------------------------------------------
 
@@ -80,6 +85,8 @@ class Switcher:
         backend = self.backends[kind]
         with self._locked(backend):
             profile = self.profiles.find(kind, name)
+            self._make_way(profile)
+            profile = self.profiles.get(profile.id)  # returning a slot may have updated it
             secret, target = self.profiles.secret(profile)
             outcome = self._switch(backend, secret, target, profile.label, force=force)
             if outcome.status == "switched":
@@ -90,6 +97,8 @@ class Switcher:
         mine = self.profiles.of_kind(kind)
         if not mine:
             raise SwitchError("no-profiles", f"no saved {kind} logins yet; save one first")
+        held = self.held_by_sessions(kind)
+        mine = [p for p in mine if p.id not in held] or mine
         live = self.backends[kind].read_live()
         current = (
             [p.fingerprint for p in mine].index(live.fingerprint)
@@ -101,6 +110,10 @@ class Switcher:
     def undo(self, kind: str, *, force: bool = False) -> Outcome:
         backend = self.backends[kind]
         with self._locked(backend):
+            pointed = self._undo_pointer(store_tag(backend))
+            if pointed is not None:
+                with contextlib.suppress(ProfileError):
+                    self._make_way(self.profiles.get(pointed))
             secret = self._undo_secret(backend)
             if secret is None:
                 raise SwitchError("no-undo", f"nothing to undo for {kind}")
@@ -208,7 +221,8 @@ class Switcher:
             self._check_contamination(backend, snapshot)
             saved = self.profiles.by_fingerprint(rescue.kind, snapshot.fingerprint)
             if saved is not None:
-                return self.profiles.update_secret(saved, snapshot), False
+                self._make_way(saved)
+                return self.profiles.update_secret(self.profiles.get(saved.id), snapshot), False
             email = snapshot.identity.email or snapshot.identity.account_id[:8]
             return self.profiles.create((name or f"rescued {email}")[:MAX_LABEL], snapshot), True
 
@@ -223,7 +237,33 @@ class Switcher:
             journal = self.journals.current(store_tag(backend))
             if journal is not None:
                 self._resolve(backend, journal)
+            self._make_way(profile)
             self.profiles.delete(profile)
+
+    def revert(self, profile: Profile) -> None:
+        """Give a profile back its previous login (profiles.revert), under the store lock."""
+        with self._store_locks(self.backends[profile.kind]):
+            self._make_way(profile)
+            self.profiles.revert(self.profiles.get(profile.id))
+
+    def held_by_sessions(self, kind: str) -> set[str]:
+        """Ids of profiles lent to pinned sessions that are running (design §14)."""
+        if self.slots is None or kind != "claude":
+            return set()
+        try:
+            slots = self.slots.all()
+        except AuthPickerError:
+            return set()  # a switch to any of them still checks, and refuses
+        try:
+            users = self.slots.users() if slots else {}
+        except AuthPickerError:
+            return {s.profile_id for s in slots}  # can't tell: assume all are
+        return {s.profile_id for s in slots if self.slots.in_use(s, users)}
+
+    def _make_way(self, profile: Profile) -> None:
+        """I8: before the main store or a profile change takes an account, end its slot."""
+        if self.slots is not None and profile.kind == "claude":
+            self.slots.make_way(profile)
 
     def recover(self, kind: str) -> str | None:
         """Finish or undo an interrupted switch. Returns what happened, if anything."""
