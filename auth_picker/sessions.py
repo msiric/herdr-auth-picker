@@ -74,6 +74,8 @@ REPLACED: dict[str, int | str] = {
     "--session-id": 1,
     "-n": 1,
     "--name": 1,
+    # Pulled a cloud session into a local one; resuming continues it here.
+    "--teleport": "optional",
 }
 # A session started like this can't be restarted in place.
 REFUSED = {
@@ -86,7 +88,6 @@ REFUSED = {
     "--tmux": "it runs in tmux (--tmux)",
     "--remote-control": "it is under remote control",
     "--cloud": "it is a cloud session",
-    "--teleport": "it is a teleported session",
     "--desktop": "it runs in Claude Desktop",
     "--from-pr": "it was opened from a pull request",
 }
@@ -212,9 +213,23 @@ VISIBLE = "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1"
 HOLD_AFTER_FAILURE_S = 600.0
 
 
-def command_line(argv: list[str], slot_dir: str | None) -> str:
-    """What gets typed. The leading space keeps it out of shell history where set up."""
-    env = f"env {SLOT_VAR}={shlex.quote(slot_dir)} {VISIBLE} " if slot_dir else ""
+# Claude's cloud features (/teleport, remote control) name the organization
+# from this, else from the shared `oauthAccount`, which is the main account's.
+ORG_VAR = "CLAUDE_CODE_ORGANIZATION_UUID"
+_PLAIN_ID = re.compile(r"[\w-]+")
+
+
+def command_line(argv: list[str], slot_dir: str | None, org: str | None = None) -> str:
+    """What gets typed. The leading space keeps it out of shell history where set up.
+
+    ``org``: the slot account's organization id, so that cloud features in
+    the session use its own organization rather than the main account's.
+    """
+    env = ""
+    if slot_dir:
+        env = f"env {SLOT_VAR}={shlex.quote(slot_dir)} {VISIBLE} "
+        if org and _PLAIN_ID.fullmatch(org):
+            env += f"{ORG_VAR}={org} "
     return " " + env + shlex.join(argv)
 
 
@@ -353,7 +368,8 @@ def move(
         )
     slot_dir = slots.lend(target) if target is not None else None
     try:
-        pid = _restart(session, command_line(argv, slot_dir), slot_dir, progress, name)
+        org = target.identity.subject_id if target is not None else None
+        pid = _restart(session, command_line(argv, slot_dir, org), slot_dir, progress, name)
     except BaseException:
         if target is not None:
             # The session is stopped; keep its slot for the command shown.

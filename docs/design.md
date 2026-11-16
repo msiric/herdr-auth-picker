@@ -520,7 +520,10 @@ serialised against switches.
    the foreground process again.
 5. Clear the input line (`ctrl+u`) and type
    `env CLAUDE_SECURESTORAGE_CONFIG_DIR=<dir> CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 <claude> <kept flags> --resume <id>`
-   (no `env` part for the main store). The second variable stops a Node-run
+   (no `env` part for the main store), plus `CLAUDE_CODE_ORGANIZATION_UUID` set to
+   the account's own organization: Claude's cloud features (`/teleport`, remote
+   control) read it before the shared `oauthAccount`, which names the main
+   account's. The second variable stops a Node-run
    Claude renaming its process, which on macOS hides its environment from
    `ps`; a Claude whose environment can't be seen counts as using every slot.
    The command starts with a space, to keep it out of shell history where that
@@ -535,7 +538,7 @@ serialised against switches.
 
 Kept flags are an allowlist (permission, model, effort, settings, plugin,
 tool and directory options). Flags that choose a session (`-c`, `-r`,
-`--session-id`, `--fork-session`) and prompt arguments are replaced by
+`--session-id`, `--fork-session`, `--teleport`) and prompt arguments are replaced by
 `--resume <id>`. Anything else is dropped and reported. Arguments with control
 characters or backslashes are refused: they can't be quoted the same way in
 every shell.

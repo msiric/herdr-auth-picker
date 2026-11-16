@@ -33,6 +33,7 @@ SHELL = 100
             [],
         ),
         (["claude", "-r", "old-id", "--effort=high"], ["claude", "--effort=high"], []),
+        (["claude", "--teleport", "--model", "x"], ["claude", "--model", "x"], []),
         (
             ["claude", "--add-dir", "a", "b", "--verbose"],
             ["claude", "--add-dir", "a", "b", "--verbose"],
@@ -49,7 +50,7 @@ def test_a_restart_keeps_only_setup_flags(
     assert restart_argv(argv, SID) == ([*kept, "--resume", SID], dropped)
 
 
-@pytest.mark.parametrize("flag", ["-p", "--print", "--bg", "-w", "--tmux"])
+@pytest.mark.parametrize("flag", ["-p", "--print", "--bg", "-w", "--tmux", "--cloud"])
 def test_sessions_that_cannot_restart_in_place_are_refused(flag: str) -> None:
     with pytest.raises(SessionError, match="can't be moved"):
         restart_argv(["claude", flag], SID)
@@ -104,7 +105,9 @@ class FakePane:
         env = None
         if words[0] == "env":
             env = words[1].split("=", 1)[1]
-            words = words[3:]
+            words = words[1:]
+            while "=" in words[0]:
+                words = words[1:]
         self.claude = (300, words, env)
         return True
 
@@ -175,8 +178,9 @@ def test_a_session_moves_to_its_own_account_and_keeps_its_conversation(
     assert pane.killed == [200]
     assert pane.keys == ["ctrl+u"]
     directory = slots.directory(b.id)
+    org = f"{sessions.ORG_VAR}=org-1-bob"  # B's own organization, not the main account's
     assert pane.typed == [
-        f" env {SLOT_VAR}={directory} {sessions.VISIBLE} claude --model opus --resume {SID}"
+        f" env {SLOT_VAR}={directory} {sessions.VISIBLE} {org} claude --model opus --resume {SID}"
     ]
     assert slots.get(b.id) is not None
     assert any("prompt" in note for note in moved.notes)
@@ -288,7 +292,10 @@ def test_a_session_with_nothing_said_yet_starts_fresh_on_the_account(
     b = world.profiles.find("claude", "B")
     moved = sessions.move(slots, "w1:p2", b)
     directory = slots.directory(b.id)
-    assert pane.typed == [f" env {SLOT_VAR}={directory} {sessions.VISIBLE} claude --model opus"]
+    org = f"{sessions.ORG_VAR}=org-1-bob"
+    assert pane.typed == [
+        f" env {SLOT_VAR}={directory} {sessions.VISIBLE} {org} claude --model opus"
+    ]
     assert "started fresh" in moved.notes[0]
 
 

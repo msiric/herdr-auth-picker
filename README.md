@@ -4,7 +4,7 @@ Switch which Claude Code or Codex account is logged in, from inside
 [herdr](https://herdr.dev), without logging out and back in, and without
 losing a login along the way.
 
-> **Status: 1.4.1.** Verified end to end with real Claude and Codex accounts,
+> **Status: 1.4.2.** Verified end to end with real Claude and Codex accounts,
 > including running sessions, and independently reviewed. Results:
 > [`docs/e2e-checklist.md`](docs/e2e-checklist.md).
 
@@ -49,7 +49,7 @@ in [`docs/threat-model.md`](docs/threat-model.md).
 From GitHub, pinned to a release (read the code first: it handles your logins):
 
 ```sh
-herdr plugin install msiric/herdr-auth-picker --ref v1.4.1
+herdr plugin install msiric/herdr-auth-picker --ref v1.4.2
 ```
 
 Or from a local checkout: `herdr plugin link /path/to/herdr-auth-picker`.
@@ -138,6 +138,10 @@ moves it back. From a shell: `bin/auth-picker pin PANE NAME`, or `main`.
 - When the last session on an account closes or moves back, its login (renewed
   meanwhile) goes back to its profile. Sessions that just exit are tidied at
   the next finished turn, at herdr start, or with `cleanup`.
+- To continue a claude.ai (Code tab) conversation on another account: in a
+  session on the account that owns it, run `/teleport` and pick it; then `p`
+  on the account to continue with. It continues locally from there; the cloud
+  copy no longer follows.
 - Codex can't do this: it has no per-session login.
 
 ### The badge
